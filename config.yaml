@@ -1,0 +1,145 @@
+# DRAM-T project configuration
+# NOTE: No local CUDA GPU was detected on this machine (Intel Iris Xe integrated
+# graphics only). All defaults below are tuned for CPU-only training: smaller
+# model width, fewer layers, smaller sweep grids, fewer epochs than the original
+# GPU-oriented spec. device is auto-detected at runtime (CUDA used if available).
+
+seed: 42
+
+device:
+  prefer_cuda: true          # will fall back to cpu automatically if unavailable
+  amp: false                 # AMP only enabled when running on CUDA
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  runs_dir: runs
+  results_dir: results
+  figures_dir: results/figures
+
+universe:
+  # All tickers pulled & fed as features; the modeled 5-stock portfolio is
+  # defined under `portfolio.members` (NVDA and ^GSPC serve as extra context).
+  tickers: [AAPL, GOOGL, MSFT, AMZN, META, NVDA]
+  benchmark: "^GSPC"
+
+portfolio:
+  # Equal-weighted 5-stock tech portfolio (excludes NVDA to match "5 tech stocks"
+  # framing; NVDA still pulled/modeled individually as a 6th ticker for coverage).
+  members: [AAPL, GOOGL, MSFT, AMZN, META]
+  weights: [0.2, 0.2, 0.2, 0.2, 0.2]
+
+data:
+  start_date: "2016-01-01"
+  end_date: null              # null = today
+  case_study_window: ["2022-12-01", "2023-03-31"]  # sentiment-equity sub-window
+  min_news_articles_per_query: 0
+
+macro:
+  fred_series:
+    CPIAUCSL: cpi
+    UNRATE: unemployment
+    DFF: fed_funds
+    DGS10: yield_10y
+    UMCSENT: consumer_sentiment
+    INDPRO: industrial_production
+  midas:
+    n_lags: 12          # number of macro-frequency lags in tau_t
+    beta_a: 1.0          # initial Beta(a,b) weighting params (fit during training)
+    beta_b: 5.0
+
+sentiment:
+  provider: gdelt
+  finbert_model: ProsusAI/finbert
+  decay_days: 3
+  max_records_per_query: 250
+  # GDELT DOC API is aggressively rate-limited (observed: 429 on this sandbox's
+  # shared egress IP even with 30-60s gaps between calls). Use a long baseline
+  # sleep plus exponential backoff and accept that a full historical pull will
+  # take a long time / run in the background.
+  rate_limit_sleep_sec: 6.0
+  retry_max: 8
+  retry_backoff_sec: 20.0
+  retry_backoff_max_sec: 300.0
+  # Two-tier temporal resolution: daily queries inside the sentiment-equity case
+  # study window (documented in data.case_study_window), coarser monthly queries
+  # for the rest of the 2016-present span (query cost is otherwise intractable
+  # under this rate limit). Documented explicitly as a resolution trade-off.
+  case_study_query_freq: "D"
+  full_history_query_freq: "M"
+  # GDELT DOC 2.0 full-text search API rejects queries before 2017-01-01
+  # ("Invalid query start date"). Sentiment for 2016 is therefore structurally
+  # unavailable: those days get neutral score 0 + has_news=0 missingness flag.
+  gdelt_min_start: "2017-01-01"
+  keywords:
+    AAPL: ["Apple Inc", "AAPL stock"]
+    GOOGL: ["Google", "Alphabet Inc"]
+    MSFT: ["Microsoft Corp", "MSFT stock"]
+    AMZN: ["Amazon.com", "Amazon Inc"]
+    META: ["Meta Platforms", "Facebook Inc"]
+    NVDA: ["Nvidia Corp", "NVDA stock"]
+
+technical_indicators:
+  rsi_period: 14
+  macd: [12, 26, 9]
+  bollinger: [20, 2]
+  rolling_vol_window: 20
+  atr_period: 14
+  momentum_window: 10
+
+windowing:
+  T_sweep: [10, 20]        # reduced from {10,20,30,40} for CPU feasibility
+  default_T: 20
+  horizons: [1, 2, 3, 5, 8, 10]   # reduced multi-horizon set (1..10 subsampled), still covers 1-10 range
+  full_horizon_range: [1, 10]      # documented full spec; horizons list above is the practically-evaluated subset
+
+splits:
+  n_folds: 4
+  scheme: expanding_walk_forward
+  val_frac_of_fold: 0.5     # split each rolling test window into val/test halves
+
+model:
+  d_model_sweep: [64, 128]        # reduced from {128,256} for CPU
+  default_d_model: 64
+  n_heads: 4                       # reduced from 8 (must divide d_model)
+  n_layers_sweep: [2]              # reduced from {2,3,4}
+  default_n_layers: 2
+  dropout: 0.2
+  ffn_mult: 2
+
+loss:
+  lambda1_sweep: [0.1, 0.5]   # volatility NLL weight, reduced grid
+  lambda2_sweep: [0.1, 0.5]   # correlation Frobenius weight, reduced grid
+  lambda3_weight_decay: 1e-5
+
+training:
+  # Targets (returns/vols) are multiplied by target_scale during training
+  # (percent units): raw log-return scale (~0.02) is badly conditioned for
+  # MSE/NLL optimization (verified in M3 overfit diagnostics). Predictions
+  # are divided back before metric computation.
+  target_scale: 100.0
+  lr_sweep: [1e-4, 5e-4]      # reduced from log-grid across [1e-5,1e-3]
+  default_lr: 1e-4
+  batch_size: 32
+  max_epochs: 30               # reduced from larger GPU budget
+  early_stopping_patience: 5   # reduced from 10 for CPU wall-clock
+  grad_clip_norm: 1.0
+  lr_schedule: plateau
+
+var:
+  horizon_days: 10
+  confidence: 0.95
+
+logging:
+  log_every_n_steps: 20
+  use_wandb: false
+
+notes:
+  compute_assumption: >
+    Original spec assumed a local CUDA GPU. This machine has no NVIDIA GPU
+    (Intel Iris Xe integrated graphics only, no CUDA support). All sweeps,
+    model width/depth, and epoch budgets above were reduced to keep full
+    walk-forward training tractable on CPU. If a CUDA GPU becomes available,
+    restore the original sweep grids (d_model {128,256}, n_layers {2,3,4},
+    T {10,20,30,40}, full horizons 1-10, lr log-grid [1e-5,1e-3]) and enable
+    device.amp.
