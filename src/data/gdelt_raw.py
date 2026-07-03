@@ -95,11 +95,16 @@ def query_gdelt(
     return None
 
 
-def _daily_windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+def _daily_windows(start: datetime, end: datetime, chunk_days: int = 3) -> list[tuple[datetime, datetime]]:
+    """Case-study windows. NOTE: daily feature resolution does NOT require
+    1-day query windows — aggregation uses each article's own `seendate`.
+    Multi-day chunks preserve daily resolution while cutting query count
+    (observed volume ~20-40 articles/day per keyword << the 250-record cap
+    for a 3-day chunk), which matters under GDELT's aggressive rate limit."""
     windows = []
     cur = start
     while cur < end:
-        nxt = min(cur + timedelta(days=1), end)
+        nxt = min(cur + timedelta(days=chunk_days), end)
         windows.append((cur, nxt))
         cur = nxt
     return windows
