@@ -38,9 +38,17 @@ def main() -> None:
     best["name"] = "dramt_final"
     Path("experiments/final.yaml").write_text(yaml.safe_dump(best), encoding="utf-8")
 
+    # seed-robustness variants of the final model (same config, seeds 43/44)
+    for seed in (43, 44):
+        variant = dict(best, seed=seed, name=f"dramt_final_s{seed}")
+        Path(f"experiments/final_s{seed}.yaml").write_text(
+            yaml.safe_dump(variant), encoding="utf-8")
+
     steps: list[list[str]] = [
         ["src.data.build_features"],                                   # incl. FinBERT scoring
         ["src.train", "--config", "experiments/final.yaml"],
+        ["src.train", "--config", "experiments/final_s43.yaml"],
+        ["src.train", "--config", "experiments/final_s44.yaml"],
         ["src.baselines", "--model", "sentiment_lstm", "--suffix", ""],
         ["src.ablation", "--suffix", ""],
         ["src.evaluate"],

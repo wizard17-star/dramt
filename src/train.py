@@ -81,7 +81,7 @@ def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
         dynamic_weighting=exp.get("dynamic_weighting", True),
         risk_head=exp.get("risk_head", True),
         dataset_suffix=exp.get("dataset_suffix", ""),
-        seed=base["seed"],
+        seed=int(exp.get("seed", base["seed"])),
     )
 
 
