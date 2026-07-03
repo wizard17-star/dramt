@@ -213,6 +213,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     fold_dir.mkdir(parents=True, exist_ok=True)
     log_path = fold_dir / "epochs.csv"
     best_val, best_epoch, bad_epochs = float("inf"), -1, 0
+    best_val_components: dict[str, float] = {}
 
     with open(log_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -233,6 +234,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                         fold.k, epoch, tr["loss"], va["loss"], dt)
             if va["loss"] < best_val - 1e-5:
                 best_val, best_epoch, bad_epochs = va["loss"], epoch, 0
+                best_val_components = dict(va)
                 torch.save({"model": model.state_dict(), "epoch": epoch,
                             "val_loss": best_val, "config": ecfg.__dict__},
                            fold_dir / "best.pt")
@@ -250,6 +252,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     pm = point_metrics(y_true, preds["mu"])
     result = {
         "fold": fold.k, "best_epoch": best_epoch, "best_val_loss": best_val,
+        "best_val_components": best_val_components,
         "test_point_metrics": pm,
         "n_train": len(fold.train_idx), "n_val": len(fold.val_idx), "n_test": len(fold.test_idx),
     }
