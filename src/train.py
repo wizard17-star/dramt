@@ -244,9 +244,14 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                     logger.info("fold %d: early stop at epoch %d (best %d)", fold.k, epoch, best_epoch)
                     break
 
-    # restore best & evaluate on test
+    # restore best & evaluate on test (plus val predictions for post-hoc
+    # sigma calibration downstream — validation only, never test)
     ckpt = torch.load(fold_dir / "best.pt", weights_only=False)
     model.load_state_dict(ckpt["model"])
+    val_preds = predict(model, loaders["val"], device, ecfg.target_scale)
+    np.savez_compressed(fold_dir / "val_predictions.npz",
+                        mu=val_preds["mu"], sigma=val_preds["sigma"],
+                        y_ret=data["y_ret"][fold.val_idx])
     preds = predict(model, loaders["test"], device, ecfg.target_scale)
     y_true = data["y_ret"][fold.test_idx]
     pm = point_metrics(y_true, preds["mu"])

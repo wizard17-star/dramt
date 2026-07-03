@@ -49,6 +49,21 @@ def _train_static_corr(daily: pd.DataFrame, portfolio: list[str],
     return np.corrcoef(rets.to_numpy().T)
 
 
+def _val_sigma_scale(npz_path: Path) -> float | None:
+    """Post-hoc volatility calibration factor from VALIDATION predictions:
+    s = sqrt(E[(y-mu)^2] / E[sigma^2]) so that val residuals are unit-scaled
+    by s*sigma. Uses no test information."""
+    val_path = npz_path.parent / "val_predictions.npz"
+    if not val_path.exists():
+        return None
+    v = np.load(val_path)
+    resid2 = float(np.mean((v["y_ret"] - v["mu"]) ** 2))
+    sig2 = float(np.mean(v["sigma"] ** 2))
+    if sig2 <= 0:
+        return None
+    return float(np.sqrt(resid2 / sig2))
+
+
 def evaluate_fold(npz_path: Path, horizons: list[int], weights: np.ndarray,
                   static_corr: np.ndarray | None, conf: float = 0.95) -> dict:
     z = np.load(npz_path)
@@ -59,6 +74,18 @@ def evaluate_fold(npz_path: Path, horizons: list[int], weights: np.ndarray,
     out: dict = {"point": point_metrics(y_ret, mu)}
     if sigma is None:
         return out
+
+    # apply validation-fitted sigma calibration when available (documented:
+    # post-hoc recalibration, no test leakage; raw sigma metrics kept too)
+    s = _val_sigma_scale(npz_path)
+    if s is not None:
+        out["sigma_calibration"] = s
+        out["risk_raw"] = {
+            "VolRMSE": float(np.sqrt(np.mean((sigma - y_vol) ** 2))),
+            "CRPS": crps_normal(y_ret, mu, sigma),
+            "Coverage95": interval_coverage(y_ret, mu, sigma, conf),
+        }
+        sigma = sigma * s
 
     h10 = horizons.index(10)
     out["risk"] = {
