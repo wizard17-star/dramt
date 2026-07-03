@@ -22,7 +22,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 MODEL_LABELS = {
-    "dramt_full": "DRAM-T (proposed)",
+    "dramt_final": "DRAM-T (proposed)",
+    "dramt_full": "DRAM-T (interim, no sentiment)",
     "baseline_arima": "ARIMA",
     "baseline_garch": "GARCH(1,1)",
     "baseline_garch_midas": "GARCH-MIDAS",
