@@ -130,6 +130,10 @@ def main() -> None:
     parser.add_argument("--skip-gdelt", action="store_true")
     parser.add_argument("--only-gdelt", action="store_true")
     parser.add_argument("--gdelt-tickers", nargs="*", default=None)
+    parser.add_argument("--gdelt-phase", choices=["all", "case", "monthly"], default="all",
+                        help="case = only the daily case-study windows (fetch these FIRST)")
+    parser.add_argument("--primary-kw", action="store_true",
+                        help="query only the first keyword per ticker (halves query count)")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -161,6 +165,8 @@ def main() -> None:
         sc = cfg["sentiment"]
         for ticker in tickers:
             keywords = sc["keywords"].get(ticker, [ticker])
+            if args.primary_kw:
+                keywords = keywords[:1]
             df = download_gdelt_news_for_ticker(
                 ticker=ticker,
                 keywords=keywords,
@@ -174,6 +180,7 @@ def main() -> None:
                 retry_backoff_sec=sc["retry_backoff_sec"],
                 retry_backoff_max_sec=sc["retry_backoff_max_sec"],
                 min_start=sc.get("gdelt_min_start", "2017-01-01"),
+                phase=args.gdelt_phase,
             )
             n_windows = len(list((raw_dir / "gdelt" / ticker).glob("*.csv")))
             n_empty = sum(

@@ -1,12 +1,7 @@
-# Full DRAM-T experiment (all modalities, dynamic weighting, risk-aware heads).
-# Values omitted here fall back to config.yaml defaults.
-name: dramt_full
 T: 20
 d_model: 64
-n_layers: 2
-lr: 1.0e-4
+dataset_suffix: _nosent
 lambda1: 0.1
 lambda2: 0.1
-# While GDELT sentiment is still downloading, train on the placeholder dataset;
-# final runs (M6) rebuild features with real sentiment and drop this suffix.
-dataset_suffix: "_nosent"
+lr: 0.0001
+name: dramt_full

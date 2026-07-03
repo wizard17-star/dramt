@@ -134,6 +134,7 @@ def download_gdelt_news_for_ticker(
     retry_backoff_sec: float = 20.0,
     retry_backoff_max_sec: float = 300.0,
     min_start: str = "2017-01-01",
+    phase: str = "all",           # "all" | "case" (daily windows only) | "monthly"
 ) -> pd.DataFrame:
     """Fetch raw GDELT articles for one ticker across the full span, using
     daily-resolution windows inside the case-study window and monthly-resolution
@@ -158,6 +159,11 @@ def download_gdelt_news_for_ticker(
     if cs_end < end_dt:
         for w in _monthly_windows(cs_end, end_dt):
             windows.append((*w, "monthly"))
+
+    if phase == "case":
+        windows = [w for w in windows if w[2] == "daily"]
+    elif phase == "monthly":
+        windows = [w for w in windows if w[2] == "monthly"]
 
     all_frames = []
     for w_start, w_end, granularity in windows:
