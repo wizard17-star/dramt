@@ -1,0 +1,14 @@
+\begin{table}
+\caption{Risk-forecast metrics: VaR backtest calibration, volatility accuracy, interval coverage and CRPS (mean across folds).}
+\label{tab:risk}
+\begin{tabular}{lcccccc}
+\toprule
+Model & VaR breach (\%) & Vol RMSE & Coverage 95\% & CRPS & Kupiec $p_{min}$ & Christof. $p_{min}$ \\
+\midrule
+DCC-GARCH & 5.39 (nom. 5) & 0.0125 $\pm$ 0.0018 & 0.728 $\pm$ 0.039 & 0.0236 $\pm$ 0.0038 & 0.0006 & 0.0000 \\
+GARCH(1,1) & 4.31 (nom. 5) & 0.0125 $\pm$ 0.0018 & 0.728 $\pm$ 0.039 & 0.0236 $\pm$ 0.0038 & 0.0006 & 0.0008 \\
+GARCH-MIDAS & 4.74 (nom. 5) & 0.0131 $\pm$ 0.0018 & 0.742 $\pm$ 0.060 & 0.0235 $\pm$ 0.0039 & 0.0006 & 0.0008 \\
+DRAM-T (proposed) & 0.00 (nom. 5) & 0.0237 $\pm$ 0.0041 & 0.911 $\pm$ 0.045 & 0.0226 $\pm$ 0.0029 & 0.0006 & 1.0000 \\
+\bottomrule
+\end{tabular}
+\end{table}
