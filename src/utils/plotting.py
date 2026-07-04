@@ -79,7 +79,9 @@ def var_backtest_plot(run_dir: Path, figures_dir: Path, horizons: list[int],
             continue
         dates = pd.to_datetime(z["anchor_dates"], unit="ns")
         mu_h = z["mu"][:, :, h10]
-        sig_h = z["sigma"][:, :, h10] * np.sqrt(10.0)
+        # DRAM-T sigma is trained against cumulative h-day returns -> already
+        # in 10-day units at h10 (this plot is only produced for DRAM-T runs)
+        sig_h = z["sigma"][:, :, h10]
         mu_p, sigma_p = portfolio_moments(mu_h, sig_h, z["corr"], weights)
         var10, _ = var_es_normal(mu_p, sigma_p, conf)
         realized = z["y_ret"][:, :, h10] @ weights

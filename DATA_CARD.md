@@ -23,12 +23,28 @@ GDELT's DOC 2.0 full-text search index also has materially better English-langua
 | Ticker | Articles cached | Windows queried | Windows with zero articles |
 |---|---|---|---|
 | AAPL | 5616 | 95 | 0 |
-| GOOGL | 9248 | 37 | 0 |
-| MSFT | 4142 | 38 | 0 |
-| AMZN | 8215 | 34 | 0 |
-| META | 6130 | 33 | 0 |
-| NVDA | 858 | 37 | 0 |
+| GOOGL | 9997 | 40 | 0 |
+| MSFT | 4567 | 40 | 0 |
+| AMZN | 9609 | 40 | 0 |
+| META | 7378 | 40 | 0 |
+| NVDA | 907 | 40 | 0 |
 
 ## Missingness policy
 
 Days/windows with zero retrieved news articles are filled with neutral sentiment (signed_score = 0) plus an explicit `has_news=0` missingness flag, applied in M2 (`src/data/sentiment_gdelt_finbert.py`), not at raw-download time.
+
+## Final GDELT/sentiment coverage (post-run, 2026-07-04)
+
+- 54,236 unique headlines FinBERT-scored (AAPL 22,087; GOOGL 9,995; AMZN 9,598;
+  META 7,094; MSFT 4,567; NVDA 895).
+- Case-study window (2022-12-01..2023-03-31, daily resolution via 3-day query
+  chunks, per-article timestamps): trading days with news per ticker:
+  AAPL 82/83, MSFT 82/83, AMZN 77/83, META 77/83, GOOGL 60/83, NVDA partial.
+- GOOGL gap cause: GDELT 250-records-per-query cap truncates the very-high-volume
+  "Google" keyword within 3-day chunks (most-recent-first ordering) -> some
+  low-coverage days; flagged by has_news=0 and neutral-filled.
+- Outside the case window sentiment is monthly-resolution (AAPL history most
+  complete: 947/2355 trading days with news across 2017-2026); 2016 has no
+  sentiment at all (GDELT DOC 2.0 index starts 2017-01-01).
+- NVDA is a context feature only (not a portfolio member); its partial coverage
+  is neutral-filled with has_news=0.
