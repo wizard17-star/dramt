@@ -33,6 +33,8 @@ from src.models.baselines.econometric import (
     dcc_garch_forecasts,
     garch_forecasts,
     garch_midas_forecasts,
+    har_rv_forecasts,
+    martingale_forecasts,
 )
 from src.train import amp_context, load_dataset, prepare_fold
 from src.utils.config import load_config
@@ -43,7 +45,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 DEEP_MODELS = ["lstm", "gru", "cnn_bilstm", "cnn_bilstm_attn", "transformer", "sentiment_lstm"]
-ECONOMETRIC_MODELS = ["arima", "garch", "garch_midas", "dcc_garch"]
+ECONOMETRIC_MODELS = ["martingale", "arima", "garch", "garch_midas", "dcc_garch", "har_rv"]
 # TFT is handled separately: pytorch-forecasting needs a long-format panel
 # rather than the pre-windowed tensors the other deep baselines consume.
 SPECIAL_MODELS = ["tft"]
@@ -172,6 +174,10 @@ def run_econometric_baseline(name: str, base: dict, data: dict, fold: Fold,
             mu[:, si, :], vol[:, si, :] = garch_forecasts(r, train_end, anchors, horizons)
         elif name == "garch_midas":
             mu[:, si, :], vol[:, si, :] = garch_midas_forecasts(r, train_end, anchors, horizons)
+        elif name == "martingale":
+            mu[:, si, :], vol[:, si, :] = martingale_forecasts(r, train_end, anchors, horizons)
+        elif name == "har_rv":
+            mu[:, si, :], vol[:, si, :] = har_rv_forecasts(r, train_end, anchors, horizons)
         else:
             raise ValueError(name)
         logger.info("%s fold %d: %s done", name, fold.k, stock)

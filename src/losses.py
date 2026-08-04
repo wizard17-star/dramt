@@ -70,14 +70,46 @@ def student_t_nll(y: torch.Tensor, mu: torch.Tensor, scale: torch.Tensor,
     )
 
 
+def pairwise_ranking_loss(mu: torch.Tensor, y: torch.Tensor,
+                          margin: float = 0.0) -> torch.Tensor:
+    """Cross-sectional pairwise ranking loss over the stock axis.
+
+    For every (sample, horizon) and every ordered stock pair (i, j) with
+    y_i > y_j, penalise the model for not ranking i above j:
+
+        mean over pairs of  softplus(margin - (mu_i - mu_j)) * |y_i - y_j|
+
+    weighted by the true gap so that inverting a large spread costs more than
+    inverting two near-identical returns.
+
+    Rationale: minimising a pointwise error on daily returns drives the model
+    toward the conditional mean, which here is essentially zero -- measured on
+    this project's test set a constant-zero forecast beats the trained model
+    (R^2 = -0.026). A ranking objective removes the incentive to shrink, since
+    it only cares about ORDER, and the ranking-loss literature reports it to
+    be more robust than MSE in heavy-tailed, low signal-to-noise regimes.
+
+    Caveat for this project: with only 5 portfolio members each cross-section
+    has 10 pairs, so the objective is thin. Treat it as an exploratory variant.
+    """
+    # (B,S,H) -> pairwise differences along the stock axis
+    d_mu = mu.unsqueeze(2) - mu.unsqueeze(1)          # (B,S,S,H)
+    d_y = y.unsqueeze(2) - y.unsqueeze(1)
+    mask = (d_y > 0).float()                          # keep pairs where y_i > y_j
+    denom = mask.sum().clamp_min(1.0)
+    loss = nn.functional.softplus(margin - d_mu) * d_y.abs() * mask
+    return loss.sum() / denom
+
+
 class CompositeLoss(nn.Module):
     def __init__(self, lambda1: float = 0.1, lambda2: float = 0.1,
                  point_loss: str = "huber", risk_head: bool = True,
-                 dist: str = "gaussian") -> None:
+                 dist: str = "gaussian", rank_weight: float = 0.0) -> None:
         super().__init__()
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.risk_head = risk_head
+        self.rank_weight = rank_weight
         if dist not in ("gaussian", "student_t"):
             raise ValueError(f"unknown dist {dist!r}")
         self.dist = dist
@@ -85,6 +117,9 @@ class CompositeLoss(nn.Module):
             self.point_fn = nn.HuberLoss(delta=1.0)
         elif point_loss == "mse":
             self.point_fn = nn.MSELoss()
+        elif point_loss == "none":
+            # pure risk objective: drop the (unlearnable) mean term entirely
+            self.point_fn = None
         else:
             raise ValueError(f"unknown point_loss {point_loss!r}")
 
@@ -94,7 +129,12 @@ class CompositeLoss(nn.Module):
         y_ret: torch.Tensor,    # (B,S,H) percent units
         y_corr: torch.Tensor,   # (B,S,S)
     ) -> dict[str, torch.Tensor]:
-        l_point = self.point_fn(out["mu"], y_ret)
+        if self.point_fn is None:
+            l_point = torch.zeros((), device=y_ret.device)
+        else:
+            l_point = self.point_fn(out["mu"], y_ret)
+        l_rank = (pairwise_ranking_loss(out["mu"], y_ret) if self.rank_weight > 0
+                  else torch.zeros((), device=y_ret.device))
         if self.risk_head:
             mu_det = out["mu"].detach()
             if self.dist == "student_t":
@@ -108,4 +148,6 @@ class CompositeLoss(nn.Module):
             l_vol = torch.zeros((), device=y_ret.device)
             l_corr = torch.zeros((), device=y_ret.device)
             total = l_point
-        return {"loss": total, "l_point": l_point, "l_vol": l_vol, "l_corr": l_corr}
+        total = total + self.rank_weight * l_rank
+        return {"loss": total, "l_point": l_point, "l_vol": l_vol,
+                "l_corr": l_corr, "l_rank": l_rank}

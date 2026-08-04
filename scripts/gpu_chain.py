@@ -43,6 +43,22 @@ RISK_VARIANTS = [
     ("dramt_t",              "student_t", "learned"),
     ("dramt_garch",          "gaussian",  "garch_hybrid"),
     ("dramt_t_garch",        "student_t", "garch_hybrid"),
+    ("dramt_t_har",          "student_t", "har_hybrid"),
+]
+
+# Objective variants. Motivated by a measured diagnostic: a constant-ZERO
+# forecast beats the trained model on this test set (MAE 0.03030 vs 0.03070,
+# R^2 = -0.026), while realized volatility has lag-1 autocorrelation 0.92.
+# The composite loss spends most of its weight on the unlearnable mean and
+# down-weights the learnable variance by lambda1=0.1. These variants test
+# whether rebalancing recovers the volatility signal.
+#   (name, lambda1, point_loss, rank_weight)
+OBJECTIVE_VARIANTS = [
+    ("dramt_lam1_2",      2.0,  "huber", 0.0),
+    ("dramt_lam1_5",      5.0,  "huber", 0.0),
+    ("dramt_riskonly",    1.0,  "none",  0.0),   # no mean term at all
+    ("dramt_rank",        0.1,  "huber", 1.0),   # + cross-sectional ranking
+    ("dramt_rank_only",   0.1,  "none",  1.0),   # ranking replaces the mean term
 ]
 
 # RQ3 variants: (name, regime_signals, gate_per_timestep)
@@ -166,9 +182,9 @@ def main() -> None:
 
     # ---- 1. baselines ----------------------------------------------------
     if want(1):
-        for model in ["arima", "garch", "garch_midas", "dcc_garch", "lstm", "gru",
-                      "cnn_bilstm", "cnn_bilstm_attn", "transformer",
-                      "sentiment_lstm", "tft"]:
+        for model in ["martingale", "har_rv", "arima", "garch", "garch_midas",
+                      "dcc_garch", "lstm", "gru", "cnn_bilstm", "cnn_bilstm_attn",
+                      "transformer", "sentiment_lstm", "tft"]:
             if not args.force and done(f"baseline_{model}", args.n_folds):
                 print(f"[chain] SKIP baseline_{model} (already complete)", flush=True)
                 continue
@@ -196,6 +212,16 @@ def main() -> None:
             p = write_exp(name, best, regime_signals=signals,
                           gate_per_timestep=per_step)
             run(["src.train", "--config", str(p)], f"RQ3 variant {name}")
+
+    # ---- 3b. objective variants (loss rebalancing / ranking) --------------
+    if want(9):
+        for name, lam1, point_loss, rank_w in OBJECTIVE_VARIANTS:
+            if not args.force and done(name, args.n_folds):
+                print(f"[chain] SKIP {name} (already complete)", flush=True)
+                continue
+            p = write_exp(name, best, lambda1=lam1, point_loss=point_loss,
+                          rank_weight=rank_w, dist="student_t")
+            run(["src.train", "--config", str(p)], f"objective variant {name}")
 
     # ---- 4. ablations ----------------------------------------------------
     if want(4):

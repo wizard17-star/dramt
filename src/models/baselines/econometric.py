@@ -31,6 +31,142 @@ SCALE = 100.0  # percent units
 
 
 # --------------------------------------------------------------------------- #
+# Martingale / random walk (the honest null)
+# --------------------------------------------------------------------------- #
+
+def martingale_forecasts(
+    returns: pd.Series,
+    train_end: pd.Timestamp,
+    anchors: pd.DatetimeIndex,
+    horizons: list[int],
+    vol_window: int = 60,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Zero-drift random walk: mu = 0 at every horizon.
+
+    Why this baseline matters
+    -------------------------
+    Under the efficient-market null the best forecast of a future log return is
+    zero (up to a tiny drift). Measured on this project's own test set, a
+    constant-zero forecast scores MAE 0.03030, while ARIMA scores 0.03006 and
+    DRAM-T 0.03070 -- i.e. ARIMA's "significant win" is a 0.8% improvement on
+    predicting nothing, and the deep model is actually WORSE than nothing
+    (R^2 = -0.026 against the zero forecast).
+
+    Without this baseline in the table, a reader cannot tell whether ARIMA is
+    a good forecaster or merely the model that shrinks hardest toward zero.
+    Including it turns an apparently damning result ("ARIMA beats the proposed
+    architecture") into the correct and defensible one ("mean returns are not
+    predictable at these horizons; nothing beats the null by a meaningful
+    margin").
+
+    The volatility leg is a matching null: a trailing `vol_window`-day sample
+    standard deviation using only returns up to and including the anchor. This
+    gives the risk tables a naive reference too (the classic "historical
+    volatility" benchmark), so GARCH's value can be judged against something.
+    """
+    r = returns.dropna()
+    mu = np.zeros((len(anchors), len(horizons)))
+
+    trailing = r.rolling(vol_window, min_periods=max(10, vol_window // 4)).std()
+    # .loc on the anchor date uses data up to and including that day only
+    vol_day = trailing.reindex(anchors).ffill().to_numpy()
+    if np.isnan(vol_day).any():                      # very early anchors
+        vol_day = np.nan_to_num(vol_day, nan=float(r.loc[:train_end].std()))
+    vol = np.repeat(vol_day[:, None], len(horizons), axis=1)
+    return mu, vol
+
+
+# --------------------------------------------------------------------------- #
+# HAR-RV (Corsi 2009) -- heterogeneous autoregression on realized variance
+# --------------------------------------------------------------------------- #
+
+def har_rv_forecasts(
+    returns: pd.Series,
+    train_end: pd.Timestamp,
+    anchors: pd.DatetimeIndex,
+    horizons: list[int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """HAR-RV volatility forecasts; mu = 0 (HAR models variance, not the mean).
+
+    Corsi's HAR regresses future realized variance on daily, weekly and
+    monthly averages of past realized variance, capturing the long-memory of
+    volatility with three terms. It is the standard modern benchmark and is
+    reported to beat GARCH(1,1) by a wide margin on equity indices.
+
+    Two honest deviations from the canonical specification, both forced by the
+    data available here:
+    - No intraday data, so realized variance is proxied by the squared daily
+      log return (the standard low-frequency substitute). This proxy is noisy,
+      which handicaps HAR relative to a true high-frequency RV implementation.
+    - DIRECT multi-horizon estimation: for each horizon h a separate
+      regression targets the CUMULATIVE variance over the next h days, rather
+      than iterating a one-step model forward. Direct estimation avoids
+      compounding one-step errors and matches how the other models here are
+      evaluated.
+
+    The regression is run in LOG variance space, as is standard in the HAR
+    literature. This is not cosmetic: an OLS fit on variance LEVELS is not
+    constrained to predict a positive variance, and extrapolating a
+    calm-period fit to a burst an order of magnitude larger can drive the
+    prediction negative, at which point clipping floors it and the model
+    reports near-zero volatility exactly when volatility spikes. (Reproduced
+    on synthetic data during development.) Log space makes forecasts positive
+    by construction and linearises the multiplicative dynamics of volatility.
+    Back-transformation uses the standard Jensen correction exp(m + s^2/2).
+
+    Leakage: the design matrix at day t uses only RV up to t, and the OLS
+    coefficients are estimated on rows whose ENTIRE target window lies at or
+    before train_end.
+    """
+    r = returns.dropna()
+    rv = r ** 2                                        # daily realized variance proxy
+    # floor zero-return days so the log is finite; scaled to the sample so it
+    # is negligible relative to typical variance
+    floor = max(float(rv[rv > 0].quantile(0.01)) if (rv > 0).any() else 1e-12, 1e-12)
+    rv = rv.clip(lower=floor)
+
+    # min_periods=1: the weekly/monthly averages are computed from however many
+    # observations exist so far rather than being NaN at the start of the
+    # sample. This is strictly backward-looking. The alternative -- leaving
+    # leading NaNs and back-filling them later -- would pull a FUTURE value
+    # backwards, which is leakage even though it would only touch the first
+    # couple of anchors.
+    X = pd.concat([np.log(rv),
+                   np.log(rv.rolling(5, min_periods=1).mean()),
+                   np.log(rv.rolling(22, min_periods=1).mean())], axis=1)
+    X.columns = ["rv_d", "rv_w", "rv_m"]
+    X = X.dropna()
+
+    n = len(anchors)
+    mu = np.zeros((n, len(horizons)))
+    vol = np.empty((n, len(horizons)))
+
+    for hi, h in enumerate(horizons):
+        # target: log cumulative variance over the next h days (strictly future)
+        target = np.log(rv.rolling(h).sum().shift(-h).clip(lower=floor)).reindex(X.index)
+        design = X.copy()
+        design["y"] = target
+
+        # a training row is usable only if its whole target window ends by train_end
+        cutoff = train_end - pd.Timedelta(days=int(h * 1.6))
+        train = design.loc[design.index <= cutoff].dropna()
+        if len(train) < 50:
+            train = design.loc[design.index <= train_end].dropna()
+
+        A = np.column_stack([np.ones(len(train)), train[["rv_d", "rv_w", "rv_m"]].to_numpy()])
+        y = train["y"].to_numpy()
+        beta, *_ = np.linalg.lstsq(A, y, rcond=None)
+        resid_var = float(np.var(y - A @ beta))        # for the Jensen correction
+
+        Xa = X.reindex(anchors).ffill()
+        Aa = np.column_stack([np.ones(len(Xa)), Xa[["rv_d", "rv_w", "rv_m"]].to_numpy()])
+        var_cum = np.exp(np.clip(Aa @ beta + 0.5 * resid_var, -50, 50))
+        vol[:, hi] = np.sqrt(var_cum / h)              # per-day vol, matching the others
+
+    return mu, vol
+
+
+# --------------------------------------------------------------------------- #
 # ARIMA
 # --------------------------------------------------------------------------- #
 

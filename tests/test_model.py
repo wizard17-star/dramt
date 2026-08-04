@@ -352,3 +352,79 @@ def test_overfit_one_batch():
         mse = ((model(x_num, x_mac, x_sen, reg)["mu"] - y_ret) ** 2).mean().item()
     var = y_ret.var().item()
     assert mse < 0.2 * var, f"overfit check failed: mse={mse:.6f} vs var={var:.6f}"
+
+
+# --------------------------------------------------------------------------- #
+# Objective variants: ranking loss, point_loss='none', HAR hybrid
+# --------------------------------------------------------------------------- #
+
+def test_ranking_loss_removes_the_shrinkage_incentive():
+    """The motivation for a ranking objective.
+
+    When predictions carry no information -- the empirical situation for daily
+    returns here, where a constant-zero forecast beats the trained model
+    (MAE 0.03030 vs 0.03070) -- a pointwise loss is minimised by collapsing
+    toward zero. A ranking loss scores only ORDER, so scaling predictions
+    barely moves it and the collapse incentive disappears.
+    """
+    from src.losses import pairwise_ranking_loss
+
+    huber = torch.nn.HuberLoss(delta=1.0)
+    torch.manual_seed(0)
+    y = torch.randn(16, 5, 4) * 0.03            # realistic return scale
+    mu = torch.randn(16, 5, 4) * 0.03           # deliberately UNINFORMATIVE
+
+    h_full, h_zero = float(huber(mu, y)), float(huber(mu * 0.0, y))
+    r_full, r_zero = float(pairwise_ranking_loss(mu, y)), float(pairwise_ranking_loss(mu * 0.0, y))
+
+    # Huber strongly prefers predicting nothing
+    assert h_zero < h_full / 2.0
+    # the ranking loss is essentially indifferent to scale
+    assert abs(r_zero - r_full) / r_full < 0.05
+
+
+def test_ranking_loss_penalises_shrinkage_when_order_is_informative():
+    """With an informative ordering, shrinking must strictly INCREASE the
+    ranking loss, i.e. it actively defends the spread it has earned."""
+    from src.losses import pairwise_ranking_loss
+
+    torch.manual_seed(0)
+    y = torch.randn(16, 5, 4)
+    mu = y + 0.1 * torch.randn(16, 5, 4)        # correct ordering, noisy
+    losses = [float(pairwise_ranking_loss(mu * s, y)) for s in (1.0, 0.5, 0.1, 0.0)]
+    assert losses == sorted(losses), f"must increase monotonically as we shrink: {losses}"
+
+
+def test_ranking_loss_rewards_correct_order():
+    from src.losses import pairwise_ranking_loss
+
+    torch.manual_seed(1)
+    y = torch.randn(32, 5, 3)
+    good = pairwise_ranking_loss(y, y)              # perfect ordering
+    bad = pairwise_ranking_loss(-y, y)              # exactly inverted
+    assert good < bad
+
+
+def test_point_loss_none_drops_mean_term():
+    from src.losses import CompositeLoss
+
+    model = _make_model()
+    out = model(*_make_inputs())
+    y_ret = torch.randn(B, S, H) * 2.0
+    y_corr = torch.eye(S).expand(B, S, S)
+    res = CompositeLoss(0.5, 0.1, point_loss="none")(out, y_ret, y_corr)
+    assert float(res["l_point"]) == 0.0
+    assert float(res["l_vol"]) != 0.0               # risk terms still active
+
+
+def test_har_hybrid_head_behaves_like_garch_hybrid():
+    model = _make_model(vol_mode="har_hybrid")
+    x = _make_inputs()
+    gv = torch.rand(B, S, H) * 2.0 + 0.5
+    out = model(*x, gv)
+    torch.testing.assert_close(out["sigma"], gv, rtol=1e-4, atol=1e-5)
+
+
+def test_unknown_vol_mode_rejected():
+    with pytest.raises(ValueError, match="vol mode"):
+        _make_model(vol_mode="nonsense")

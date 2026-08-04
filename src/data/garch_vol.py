@@ -73,6 +73,30 @@ def garch_cumulative_vol(
     return out / SCALE
 
 
+def har_cumulative_vol(
+    returns_df: pd.DataFrame,
+    train_end: pd.Timestamp,
+    anchors: pd.DatetimeIndex,
+    horizons: list[int],
+) -> np.ndarray:                   # (n_anchors, S, H) CUMULATIVE h-day vol, raw units
+    """Per-stock HAR-RV cumulative volatility forecast at each anchor.
+
+    Same role as garch_cumulative_vol but using Corsi's HAR, which the
+    volatility-forecasting literature reports as a substantially stronger
+    benchmark than GARCH(1,1). Delegates to the baseline implementation so the
+    hybrid head and the HAR baseline can never drift apart.
+    """
+    from src.models.baselines.econometric import har_rv_forecasts
+
+    R = returns_df.dropna()
+    out = np.empty((len(anchors), R.shape[1], len(horizons)))
+    root_h = np.sqrt(np.array(horizons, dtype=float))[None, :]
+    for si, col in enumerate(R.columns):
+        _, vol_day = har_rv_forecasts(R[col], train_end, anchors, horizons)
+        out[:, si, :] = vol_day * root_h            # per-day -> cumulative
+    return out
+
+
 def load_or_build(
     processed_dir: Path,
     daily: pd.DataFrame,
@@ -83,10 +107,11 @@ def load_or_build(
     T: int,
     fold_k: int,
     suffix: str = "",
+    kind: str = "garch",           # "garch" | "har"
 ) -> np.ndarray:
-    """(n_anchors, S, H) cumulative GARCH vol for every anchor of the dataset,
-    with parameters fit on this fold's training anchors only. Cached on disk."""
-    cache = processed_dir / f"garch_vol_T{T}{suffix}_fold{fold_k}.npz"
+    """(n_anchors, S, H) cumulative conditional vol for every anchor, with
+    parameters fit on this fold's training anchors only. Cached on disk."""
+    cache = processed_dir / f"{kind}_vol_T{T}{suffix}_fold{fold_k}.npz"
     if cache.exists():
         z = np.load(cache)
         if z["vol"].shape == (len(anchor_dates_ns), len(portfolio), len(horizons)):
@@ -98,8 +123,20 @@ def load_or_build(
     returns_df = daily[[f"{t}_log_return" for t in portfolio]].copy()
     returns_df.columns = portfolio
 
-    logger.info("fitting GARCH(1,1) vol features: T=%d fold=%d train_end=%s",
-                T, fold_k, train_end.date())
-    vol = garch_cumulative_vol(returns_df, train_end, pd.DatetimeIndex(dates), horizons)
+    logger.info("fitting %s vol features: T=%d fold=%d train_end=%s",
+                kind.upper(), T, fold_k, train_end.date())
+    fn = har_cumulative_vol if kind == "har" else garch_cumulative_vol
+    vol = fn(returns_df, train_end, pd.DatetimeIndex(dates), horizons)
+    # A NaN here silently becomes a NaN sigma, a NaN loss, and a fold that
+    # trains for its full epoch budget without ever writing a checkpoint.
+    # Fail at the source instead.
+    bad = int(np.isnan(vol).sum() + np.isinf(vol).sum())
+    if bad:
+        raise ValueError(
+            f"{kind} vol features contain {bad} non-finite values "
+            f"(shape {vol.shape}, fold {fold_k}, T={T}); refusing to cache"
+        )
+    if (vol <= 0).any():
+        raise ValueError(f"{kind} vol features contain non-positive values")
     np.savez_compressed(cache, vol=vol)
     return vol

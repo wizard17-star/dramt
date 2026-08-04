@@ -60,6 +60,8 @@ class ExperimentConfig:
     vol_mode: str                # "learned" | "garch_hybrid"
     regime_signals: str          # "basic" (4 dims) | "extended" (8 dims)
     gate_per_timestep: bool
+    point_loss: str              # "huber" | "mse" | "none"
+    rank_weight: float           # cross-sectional pairwise ranking loss weight
 
 
 def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
@@ -94,6 +96,8 @@ def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
         regime_signals=exp.get("regime_signals", m.get("regime_signals", "basic")),
         gate_per_timestep=bool(exp.get("gate_per_timestep",
                                        m.get("gate_per_timestep", False))),
+        point_loss=exp.get("point_loss", l.get("point_loss", "huber")),
+        rank_weight=float(exp.get("rank_weight", l.get("rank_weight", 0.0))),
     )
 
 
@@ -185,7 +189,7 @@ def amp_context(device: torch.device, enabled: bool):
 def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0, amp=False):
     training = optimizer is not None
     model.train(training)
-    totals = {"loss": 0.0, "l_point": 0.0, "l_vol": 0.0, "l_corr": 0.0}
+    totals = {"loss": 0.0, "l_point": 0.0, "l_vol": 0.0, "l_corr": 0.0, "l_rank": 0.0}
     n = 0
     with torch.set_grad_enabled(training):
         for xn, xm, xs, reg, gv, y_ret, y_corr in loader:
@@ -291,17 +295,19 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     set_seed(ecfg.seed + fold.k)
 
     garch_vol, regime_extra = None, None
-    if ecfg.vol_mode == "garch_hybrid" or ecfg.regime_signals == "extended":
+    hybrid = ecfg.vol_mode in ("garch_hybrid", "har_hybrid")
+    if hybrid or ecfg.regime_signals == "extended":
         import pandas as pd
         processed = Path(base_cfg["paths"]["processed_dir"])
         daily = pd.read_parquet(processed / "aligned_daily.parquet")
 
-        if ecfg.vol_mode == "garch_hybrid":
+        if hybrid:
             from src.data.garch_vol import load_or_build
             garch_vol = load_or_build(
                 processed, daily, base_cfg["portfolio"]["members"],
                 data["anchor_dates"], fold.train_idx,
                 [int(h) for h in data["horizons"]], ecfg.T, fold.k, ecfg.dataset_suffix,
+                kind="har" if ecfg.vol_mode == "har_hybrid" else "garch",
             )
         if ecfg.regime_signals == "extended":
             from src.data.regime import build_extended_regime
@@ -334,7 +340,8 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
         gate_per_timestep=ecfg.gate_per_timestep,
     ).to(device)
     loss_fn = CompositeLoss(ecfg.lambda1, ecfg.lambda2, risk_head=ecfg.risk_head,
-                            dist=ecfg.dist)
+                            dist=ecfg.dist, point_loss=ecfg.point_loss,
+                            rank_weight=ecfg.rank_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=ecfg.lr, weight_decay=ecfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 

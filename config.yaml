@@ -131,6 +131,16 @@ loss:
   lambda1_sweep: [0.1, 0.5]   # volatility NLL weight
   lambda2_sweep: [0.1, 0.5]   # correlation Frobenius weight
   lambda3_weight_decay: 1e-5
+  # Point-accuracy term. Diagnostic motivating "none": on this project's own
+  # test set a constant-ZERO forecast scores MAE 0.03030 vs DRAM-T's 0.03070
+  # (R^2 = -0.026, corr(pred, actual) = -0.023), i.e. the mean-return term is
+  # not merely hard, it is actively harmful -- while realized volatility has
+  # lag-1 autocorrelation 0.92 and is clearly learnable. "none" drops the mean
+  # term so capacity goes to the part that carries signal.
+  point_loss: huber           # huber | mse | none
+  # Cross-sectional pairwise ranking loss weight (0 disables). Only ORDER is
+  # scored, so there is no incentive to shrink predictions toward zero.
+  rank_weight: 0.0
 
 training:
   # Targets (returns/vols) are multiplied by target_scale during training

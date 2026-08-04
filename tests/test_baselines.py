@@ -148,3 +148,101 @@ def test_tft_long_frame_macro_shared_and_time_idx_monotonic():
         np.testing.assert_allclose(a[m].to_numpy(), b[m].to_numpy())
     # time_idx must index the aligned grid contiguously from 0
     np.testing.assert_array_equal(a["time_idx"].to_numpy(), np.arange(len(daily)))
+
+
+# --------------------------------------------------------------------------- #
+# Martingale null + HAR-RV
+# --------------------------------------------------------------------------- #
+
+def _fake_returns(n=800, seed=5):
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2019-01-01", periods=n)
+    # volatility clustering so HAR has something real to fit
+    vol = np.zeros(n)
+    vol[0] = 0.01
+    for t in range(1, n):
+        vol[t] = np.sqrt(0.000002 + 0.10 * (vol[t - 1] * rng.normal()) ** 2
+                         + 0.88 * vol[t - 1] ** 2)
+    return pd.Series(rng.normal(0, vol), index=idx)
+
+
+def test_martingale_predicts_exactly_zero():
+    from src.models.baselines.econometric import martingale_forecasts
+
+    r = _fake_returns()
+    anchors = r.index[600:700]
+    mu, vol = martingale_forecasts(r, r.index[500], anchors, [1, 5, 10])
+    assert (mu == 0.0).all(), "the martingale null must predict exactly zero"
+    assert vol.shape == (len(anchors), 3)
+    assert (vol > 0).all() and np.isfinite(vol).all()
+
+
+def test_martingale_vol_uses_no_future_data():
+    """Trailing volatility at an anchor must not change when the future does."""
+    from src.models.baselines.econometric import martingale_forecasts
+
+    r = _fake_returns()
+    anchors = r.index[600:700]
+    _, v1 = martingale_forecasts(r, r.index[500], anchors, [1, 5, 10])
+    r2 = r.copy()
+    r2.iloc[650:] = 99.0
+    _, v2 = martingale_forecasts(r2, r.index[500], anchors, [1, 5, 10])
+    np.testing.assert_allclose(v1[:50], v2[:50], rtol=1e-12)
+
+
+def test_har_rv_shapes_and_positivity():
+    from src.models.baselines.econometric import har_rv_forecasts
+
+    r = _fake_returns()
+    anchors = r.index[600:700]
+    horizons = [1, 5, 10]
+    mu, vol = har_rv_forecasts(r, r.index[500], anchors, horizons)
+    assert mu.shape == (len(anchors), 3) and (mu == 0.0).all()
+    assert vol.shape == (len(anchors), 3)
+    assert (vol > 0).all() and np.isfinite(vol).all()
+
+
+def _clustered_returns(n=1200, seed=5):
+    """GARCH(1,1) returns: volatility is genuinely persistent, so HAR has a
+    real relationship to learn. (On homoskedastic noise there is nothing to
+    predict and a correctly-fitted HAR SHOULD be flat.)"""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2018-01-01", periods=n)
+    vol = np.zeros(n)
+    vol[0] = 0.01
+    prev_e = 0.0
+    for t in range(1, n):
+        prev_e = vol[t - 1] * rng.normal()
+        vol[t] = np.sqrt(2e-6 + 0.10 * prev_e ** 2 + 0.88 * vol[t - 1] ** 2)
+    return pd.Series(rng.normal(0, vol), index=idx), vol
+
+
+def test_har_rv_forecasts_track_future_realized_volatility():
+    """HAR's forecast must correlate positively with the volatility actually
+    realized over the following h days - the property that makes it a useful
+    risk model rather than a constant."""
+    from src.models.baselines.econometric import har_rv_forecasts
+
+    r, _ = _clustered_returns()
+    idx = r.index
+    anchors = idx[900:1150]
+    _, vol = har_rv_forecasts(r, idx[850], anchors, [5, 10])
+
+    pos = {d: i for i, d in enumerate(idx)}
+    ra = r.to_numpy()
+    for hi, h in enumerate([5, 10]):
+        realized = np.array([ra[pos[a] + 1: pos[a] + 1 + h].std() for a in anchors])
+        assert np.corrcoef(vol[:, hi], realized)[0, 1] > 0.3
+
+
+def test_har_rv_forecast_level_is_sane():
+    """Log-space fit + Jensen correction must land near the true vol level,
+    not orders of magnitude off (the failure mode of a levels-space fit)."""
+    from src.models.baselines.econometric import har_rv_forecasts
+
+    r, true_vol = _clustered_returns()
+    idx = r.index
+    anchors = idx[900:1150]
+    _, vol = har_rv_forecasts(r, idx[850], anchors, [5])
+    ratio = vol[:, 0].mean() / true_vol[900:1150].mean()
+    assert 0.5 < ratio < 2.0, f"HAR vol level off by {ratio:.2f}x"
