@@ -1,0 +1,29 @@
+\begin{table}
+\caption{Two-sided Wilcoxon signed-rank tests on paired per-sample absolute errors (reference vs each model).}
+\label{tab:wilcoxon}
+\begin{tabular}{llrrrr}
+\toprule
+model_A & model_B & median_diff_A_minus_B & pvalue & A_better & significant_5pct \\
+\midrule
+dramt_final & ablation_full & 0 & NaN & False & False \\
+dramt_final & ablation_no_macro & -3.191e-05 & 0.1172 & True & False \\
+dramt_final & ablation_no_sentiment & -0.0004089 & 2.087e-08 & True & True \\
+dramt_final & ablation_numerical_only & -7.724e-05 & 0.02043 & True & True \\
+dramt_final & ablation_point_only & -0.0002426 & 0.3178 & True & False \\
+dramt_final & ablation_static_fusion & 4.381e-05 & 0.2577 & False & False \\
+dramt_final & baseline_arima & 0.0002333 & 0.0008755 & False & True \\
+dramt_final & baseline_cnn_bilstm & -4.842e-05 & 0.1227 & True & False \\
+dramt_final & baseline_cnn_bilstm_attn & 0.0002614 & 0.06687 & False & False \\
+dramt_final & baseline_dcc_garch & 0.0002043 & 0.02795 & False & True \\
+dramt_final & baseline_garch & 0.0002043 & 0.02795 & False & True \\
+dramt_final & baseline_garch_midas & 0.0001401 & 0.01209 & False & True \\
+dramt_final & baseline_gru & -0.0003081 & 0.002687 & True & True \\
+dramt_final & baseline_lstm & 1.994e-05 & 0.5032 & False & False \\
+dramt_final & baseline_sentiment_lstm & -6.302e-05 & 0.4734 & True & False \\
+dramt_final & baseline_transformer & -0.0002179 & 0.05945 & True & False \\
+dramt_final & dramt_final_s43 & -0.0001981 & 0.001335 & True & True \\
+dramt_final & dramt_final_s44 & 9.357e-05 & 0.1854 & False & False \\
+dramt_final & dramt_full & 1.052e-05 & 0.8768 & False & False \\
+\bottomrule
+\end{tabular}
+\end{table}

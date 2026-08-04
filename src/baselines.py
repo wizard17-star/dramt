@@ -210,11 +210,20 @@ def main() -> None:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--fold", type=int, default=None)
     parser.add_argument("--suffix", default="_nosent", help="dataset suffix ('' = with sentiment)")
+    parser.add_argument("--T", type=int, default=None,
+                        help="window length; MUST match the DRAM-T run being compared "
+                             "against (default: windowing.default_T)")
     args = parser.parse_args()
 
     base = load_config("config.yaml")
     device = get_device(base["device"]["prefer_cuda"])
-    T = base["windowing"]["default_T"]
+    # T determines the number of anchors (2336/2326/2316/2306 for T=10/20/30/40),
+    # hence the fold boundaries and the test anchor set. If the baselines run at
+    # a different T than DRAM-T, the paired significance tests in src/stats_tests
+    # silently SKIP every baseline ("anchor set differs from reference") and the
+    # comparison table comes out empty. So the sweep's chosen T must be passed in.
+    T = args.T if args.T is not None else base["windowing"]["default_T"]
+    logger.info("baselines at T=%d (anchor set must match the DRAM-T run)", T)
     data = load_dataset(Path(base["paths"]["processed_dir"]), T, args.suffix)
     daily = pd.read_parquet(Path(base["paths"]["processed_dir"]) / "aligned_daily.parquet")
 

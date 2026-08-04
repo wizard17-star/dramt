@@ -34,6 +34,8 @@ import yaml
 
 RUNS = Path("runs")
 EXP = Path("experiments")
+N_HORIZONS = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))[
+    "windowing"]["horizons"]
 
 # risk variants: (name, dist, vol_mode)
 RISK_VARIANTS = [
@@ -65,7 +67,27 @@ def run(args: list[str], label: str = "") -> bool:
 
 
 def done(run_name: str, n_folds: int = 4) -> bool:
-    return len(list((RUNS / run_name).glob("fold*/test_predictions.npz"))) >= n_folds
+    """True only if the run is complete AND was produced under the CURRENT
+    horizon set.
+
+    A run left over from the CPU-era study has 6 horizons instead of 10; it
+    would satisfy a naive file-count check and be skipped, silently mixing
+    stale predictions into the new comparison tables. Checking the horizon
+    dimension makes that impossible.
+    """
+    import numpy as np
+
+    paths = sorted((RUNS / run_name).glob("fold*/test_predictions.npz"))
+    if len(paths) < n_folds:
+        return False
+    want_h = len(N_HORIZONS)
+    for p in paths:
+        if np.load(p)["mu"].shape[-1] != want_h:
+            print(f"[chain] {run_name} exists but has "
+                  f"{np.load(p)['mu'].shape[-1]} horizons (want {want_h}) - rerunning",
+                  flush=True)
+            return False
+    return True
 
 
 def write_exp(name: str, best: dict, **overrides) -> Path:
@@ -74,6 +96,55 @@ def write_exp(name: str, best: dict, **overrides) -> Path:
     path = EXP / f"{name}.yaml"
     path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return path
+
+
+def verify_comparability(n_folds: int) -> None:
+    """Fail loudly if the results are not actually comparable.
+
+    src/stats_tests silently SKIPS any run whose test anchors differ from the
+    reference (logged as a warning that is easy to miss in a long chain log).
+    The visible symptom would be a Wilcoxon table quietly missing rows - i.e.
+    a thesis table with no baseline comparisons - so it is checked explicitly.
+    """
+    import csv
+
+    import numpy as np
+
+    print("[chain] verifying anchor comparability across runs", flush=True)
+    anchors: dict[str, np.ndarray] = {}
+    for d in sorted(RUNS.iterdir()):
+        if not d.is_dir() or d.name == "sweep":
+            continue
+        paths = sorted(d.glob("fold*/test_predictions.npz"))
+        if len(paths) < n_folds:
+            continue
+        anchors[d.name] = np.concatenate([np.load(p)["anchor_dates"] for p in paths])
+
+    if not anchors:
+        print("[chain] WARNING: no completed runs found to verify", flush=True)
+        return
+
+    ref_name, ref = next(iter(anchors.items()))
+    bad = [n for n, a in anchors.items()
+           if a.shape != ref.shape or not np.array_equal(a, ref)]
+    if bad:
+        print(f"[chain] ERROR: {len(bad)} run(s) have a DIFFERENT test anchor set "
+              f"than {ref_name}: {bad}. Paired significance tests against these "
+              f"will be skipped. Most likely cause: they were trained at a "
+              f"different window length T.", flush=True)
+    else:
+        print(f"[chain] OK: all {len(anchors)} runs share an identical "
+              f"{len(ref)}-anchor test set", flush=True)
+
+    wpath = Path("results/stats_wilcoxon.csv")
+    if wpath.exists():
+        with open(wpath, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        compared = {r["model_B"] for r in rows}
+        missing = sorted(set(anchors) - compared - {rows[0]["model_A"]} if rows else [])
+        print(f"[chain] Wilcoxon table: {len(rows)} comparisons"
+              + (f"; MISSING: {missing}" if missing else "; all runs covered"),
+              flush=True)
 
 
 def main() -> None:
@@ -101,7 +172,11 @@ def main() -> None:
             if not args.force and done(f"baseline_{model}", args.n_folds):
                 print(f"[chain] SKIP baseline_{model} (already complete)", flush=True)
                 continue
-            run(["src.baselines", "--model", model, "--suffix", ""], f"baseline {model}")
+            # T must match the swept DRAM-T config, otherwise the anchor sets
+            # differ and every paired significance test against this baseline
+            # is silently dropped by src/stats_tests.
+            run(["src.baselines", "--model", model, "--suffix", "",
+                 "--T", str(best["T"])], f"baseline {model} (T={best['T']})")
 
     # ---- 2. risk variants ------------------------------------------------
     if want(2):
@@ -154,6 +229,10 @@ def main() -> None:
         run(["src.stats_tests", "--reference", "dramt_ensemble"], "significance tests")
         run(["src.tables"], "LaTeX/CSV tables")
         run(["src.utils.plotting", "--run", "dramt_ensemble"], "figures")
+
+    # ---- 8. consistency check --------------------------------------------
+    if want(8):
+        verify_comparability(args.n_folds)
 
     print("[chain] complete", flush=True)
 
