@@ -62,6 +62,8 @@ class ExperimentConfig:
     gate_per_timestep: bool
     point_loss: str              # "huber" | "mse" | "none"
     rank_weight: float           # cross-sectional pairwise ranking loss weight
+    permute_sentiment: bool      # destroy sentiment INFORMATION, keep architecture
+    permute_macro: bool
 
 
 def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
@@ -98,6 +100,8 @@ def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
                                        m.get("gate_per_timestep", False))),
         point_loss=exp.get("point_loss", l.get("point_loss", "huber")),
         rank_weight=float(exp.get("rank_weight", l.get("rank_weight", 0.0))),
+        permute_sentiment=bool(exp.get("permute_sentiment", False)),
+        permute_macro=bool(exp.get("permute_macro", False)),
     )
 
 
@@ -134,9 +138,34 @@ def regime_features(X_num: np.ndarray, X_macro: np.ndarray, X_sent: np.ndarray,
     return reg.astype(np.float32)
 
 
+def permute_within_split(X: np.ndarray, seed: int) -> np.ndarray:
+    """Shuffle a modality's samples along the anchor axis, within one split.
+
+    This is the PERMUTATION ABLATION. Dropping a modality (use_sentiment=False)
+    also deletes its encoder and shrinks the fusion, so a change in accuracy
+    confounds "the information mattered" with "the model got smaller".
+    Permuting instead keeps the architecture, the parameter count and the
+    gating dimension byte-identical, and destroys only the correspondence
+    between the modality and the target. The difference between the full model
+    and this one is therefore attributable to the INFORMATION alone.
+
+    Rows are drawn only from the same split, so a training sample can never
+    receive validation or test features. Within the test split an anchor may
+    receive a later anchor's features, but the mapping is random and was
+    learned as noise during training, so it carries no usable signal; any
+    residual effect would favour the ablation and thus makes a measured
+    degradation a conservative lower bound on the modality's contribution.
+    """
+    rng = np.random.default_rng(seed)
+    return X[rng.permutation(len(X))]
+
+
 def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float,
                  garch_vol: np.ndarray | None = None,
-                 regime_extra: np.ndarray | None = None):
+                 regime_extra: np.ndarray | None = None,
+                 permute_sentiment: bool = False,
+                 permute_macro: bool = False,
+                 permute_seed: int = 0):
     """Standardize on train only; scale targets; build regime features.
 
     `garch_vol` (n_anchors, S, H) is the fold's GARCH(1,1) cumulative volatility
@@ -157,10 +186,18 @@ def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float,
         ex_std = np.where(ex_std < 1e-12, 1.0, ex_std)
 
     parts = {}
-    for split, idx in (("train", fold.train_idx), ("val", fold.val_idx), ("test", fold.test_idx)):
+    for si, (split, idx) in enumerate((("train", fold.train_idx), ("val", fold.val_idx),
+                                       ("test", fold.test_idx))):
         Xn = scalers["X_num"].transform(data["X_num"][idx])
         Xm = scalers["X_macro"].transform(data["X_macro"][idx])
         Xs = scalers["X_sent"].transform(data["X_sent"][idx])
+        # Permute AFTER standardization (statistics are unchanged by a
+        # permutation) and BEFORE the regime signal is built, so the gate sees
+        # the same destroyed information the encoder does.
+        if permute_sentiment:
+            Xs = permute_within_split(Xs, permute_seed + 100 * si + 1)
+        if permute_macro:
+            Xm = permute_within_split(Xm, permute_seed + 100 * si + 2)
         reg = regime_features(Xn, Xm, Xs, num_cols, macro_cols, sent_cols)
         if regime_extra is not None:
             ex = ((regime_extra[idx] - ex_mean) / ex_std).astype(np.float32)
@@ -316,7 +353,10 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                 base_cfg["portfolio"]["members"],
                 pd.to_datetime(data["anchor_dates"], unit="ns"),
             )
-    parts, _ = prepare_fold(data, fold, ecfg.target_scale, garch_vol, regime_extra)
+    parts, _ = prepare_fold(data, fold, ecfg.target_scale, garch_vol, regime_extra,
+                            permute_sentiment=ecfg.permute_sentiment,
+                            permute_macro=ecfg.permute_macro,
+                            permute_seed=ecfg.seed + 1000 * fold.k)
     n_regime = parts["train"].tensors[3].shape[1]
     g = torch.Generator().manual_seed(ecfg.seed + fold.k)
     loaders = {

@@ -67,6 +67,8 @@ MODEL_LABELS = {
     "ablation_static_fusion": "-- dynamic weighting",
     "ablation_point_only": "-- risk-aware head",
     "ablation_numerical_only": "numerical only",
+    "ablation_perm_sentiment": "sentiment permuted (same architecture)",
+    "ablation_perm_macro": "macro permuted (same architecture)",
     # --- legacy CPU-era names, kept so archived summaries still label ---
     "dramt_final": "DRAM-T (CPU-era)",
     "dramt_full": "DRAM-T (CPU-era, no sentiment)",
@@ -195,7 +197,10 @@ def build_tables() -> None:
     if len(ablations):
         ablations = ablations.copy()
         ablations["config"] = ablations["run"].str.replace(r"_s\d+$", "", regex=True)
-        order = ["ablation_full", "ablation_no_sentiment", "ablation_no_macro",
+        # permutation variants sit next to the deletion they disambiguate
+        order = ["ablation_full",
+                 "ablation_no_sentiment", "ablation_perm_sentiment",
+                 "ablation_no_macro", "ablation_perm_macro",
                  "ablation_static_fusion", "ablation_point_only",
                  "ablation_numerical_only"]
         rank = {n: i for i, n in enumerate(order)}

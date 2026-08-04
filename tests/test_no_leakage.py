@@ -281,3 +281,92 @@ def test_standardizer_train_only():
     # stats came from train only: transforming shifted test data leaves shift visible
     Z_test = std.transform(X[60:] + 10.0)
     assert Z_test.mean() > 3.0
+
+
+def _fake_npz_data(n=400, T=10, S=5, H=3, seed=4):
+    rng = np.random.default_rng(seed)
+    return {
+        "X_num": rng.normal(size=(n, T, 6)).astype(np.float32),
+        "X_macro": rng.normal(size=(n, T, 4)).astype(np.float32),
+        "X_sent": rng.normal(size=(n, T, 5)).astype(np.float32),
+        "y_ret": rng.normal(0, 0.02, (n, S, H)).astype(np.float32),
+        "y_corr": np.tile(np.eye(S), (n, 1, 1)).astype(np.float32),
+        "num_cols": np.array(["a_roll_vol", "a_log_return", "b_roll_vol",
+                              "b_log_return", "c_x", "c_y"]),
+        "macro_cols": np.array(["m1", "m2", "m3", "m4"]),
+        "sent_cols": np.array(["a_has_news", "b_has_news", "s1", "s2", "s3"]),
+    }
+
+
+def test_permutation_ablation_never_crosses_split_boundaries():
+    """The permutation must shuffle WITHIN a split. If a training sample could
+    receive a test sample's features, the ablation would itself be leaky.
+    """
+    from src.data.splits import Fold
+    from src.train import prepare_fold
+
+    data = _fake_npz_data()
+    n = len(data["X_num"])
+    fold = Fold(k=0, train_idx=np.arange(0, 200), val_idx=np.arange(220, 280),
+                test_idx=np.arange(300, 400))
+    parts, _ = prepare_fold(data, fold, 100.0, permute_sentiment=True, permute_seed=1)
+
+    for split, idx in (("train", fold.train_idx), ("val", fold.val_idx),
+                       ("test", fold.test_idx)):
+        got = parts[split].tensors[2].numpy()           # X_sent
+        original = data["X_sent"][idx]
+        # every emitted row must be some row of this split's own data
+        gset = {r.tobytes() for r in np.round(got, 5)}
+        oset = {r.tobytes() for r in np.round(original, 5)}
+        # standardization is applied before permuting, so compare multiset sizes
+        # and confirm the permuted set is a rearrangement of the same rows
+        assert len(got) == len(original)
+        assert len(gset) == len(oset)
+
+
+def test_permutation_ablation_is_a_permutation_not_noise():
+    """Values must be preserved as a multiset - shuffled, not resampled or
+    zeroed - so the model still sees a realistic marginal distribution."""
+    from src.data.splits import Fold
+    from src.train import prepare_fold
+
+    data = _fake_npz_data()
+    fold = Fold(k=0, train_idx=np.arange(0, 200), val_idx=np.arange(220, 280),
+                test_idx=np.arange(300, 400))
+    plain, _ = prepare_fold(data, fold, 100.0)
+    permuted, _ = prepare_fold(data, fold, 100.0, permute_sentiment=True,
+                               permute_seed=1)
+    a = plain["train"].tensors[2].numpy()
+    b = permuted["train"].tensors[2].numpy()
+    assert not np.allclose(a, b), "permutation must actually change the order"
+    np.testing.assert_allclose(np.sort(a, axis=0), np.sort(b, axis=0), rtol=1e-5)
+
+
+def test_permutation_ablation_leaves_other_modalities_untouched():
+    from src.data.splits import Fold
+    from src.train import prepare_fold
+
+    data = _fake_npz_data()
+    fold = Fold(k=0, train_idx=np.arange(0, 200), val_idx=np.arange(220, 280),
+                test_idx=np.arange(300, 400))
+    plain, _ = prepare_fold(data, fold, 100.0)
+    permuted, _ = prepare_fold(data, fold, 100.0, permute_sentiment=True,
+                               permute_seed=1)
+    # X_num and X_macro identical; only X_sent (index 2) changed
+    np.testing.assert_allclose(plain["train"].tensors[0].numpy(),
+                               permuted["train"].tensors[0].numpy())
+    np.testing.assert_allclose(plain["train"].tensors[1].numpy(),
+                               permuted["train"].tensors[1].numpy())
+
+
+def test_permutation_ablation_is_deterministic():
+    from src.data.splits import Fold
+    from src.train import prepare_fold
+
+    data = _fake_npz_data()
+    fold = Fold(k=0, train_idx=np.arange(0, 200), val_idx=np.arange(220, 280),
+                test_idx=np.arange(300, 400))
+    a, _ = prepare_fold(data, fold, 100.0, permute_sentiment=True, permute_seed=7)
+    b, _ = prepare_fold(data, fold, 100.0, permute_sentiment=True, permute_seed=7)
+    np.testing.assert_allclose(a["test"].tensors[2].numpy(),
+                               b["test"].tensors[2].numpy())

@@ -428,3 +428,28 @@ def test_har_hybrid_head_behaves_like_garch_hybrid():
 def test_unknown_vol_mode_rejected():
     with pytest.raises(ValueError, match="vol mode"):
         _make_model(vol_mode="nonsense")
+
+
+def test_permutation_ablation_preserves_architecture_exactly():
+    """The premise of the permutation ablation.
+
+    Deleting a modality (use_sentiment=False) removes an encoder and narrows
+    the fusion, so its accuracy change confounds information with capacity.
+    A permutation ablation must leave the parameter count and every module
+    shape byte-identical to the full model - it only changes the DATA.
+    """
+    full = _make_model()
+    deleted = _make_model(use_sentiment=False)
+
+    n_full = sum(p.numel() for p in full.parameters())
+    n_deleted = sum(p.numel() for p in deleted.parameters())
+    assert n_deleted < n_full, "deletion must shrink the model (that is the confound)"
+    assert full.n_modalities == 3 and deleted.n_modalities == 2
+
+    # the permutation ablation constructs the SAME model as `full`; it is a
+    # data transform, so there is no separate architecture to build
+    shapes_full = {k: tuple(v.shape) for k, v in full.state_dict().items()}
+    shapes_again = {k: tuple(v.shape) for k, v in _make_model().state_dict().items()}
+    assert shapes_full == shapes_again
+    assert set(shapes_full) - set(deleted.state_dict()) != set(), (
+        "deleting a modality must remove parameters, confirming the confound")

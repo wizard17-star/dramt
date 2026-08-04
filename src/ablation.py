@@ -51,6 +51,14 @@ ABLATIONS: dict[str, dict] = {
     "static_fusion": {"dynamic_weighting": False},
     "point_only": {"risk_head": False},
     "numerical_only": {"use_sentiment": False, "use_macro": False},
+    # PERMUTATION ablations. no_sentiment/no_macro delete an encoder, so they
+    # change capacity and the fusion width at the same time as the
+    # information; a measured difference cannot be attributed to either.
+    # These keep the architecture byte-identical and shuffle the modality
+    # across anchors, destroying only its correspondence with the target.
+    # Contrasting perm_sentiment against no_sentiment separates the two.
+    "perm_sentiment": {"permute_sentiment": True},
+    "perm_macro": {"permute_macro": True},
 }
 
 
