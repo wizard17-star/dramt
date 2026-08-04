@@ -4,19 +4,22 @@ Everything downstream of the sweep, in dependency order. Resumable: a step
 whose outputs already exist is skipped unless --force is given, so the chain
 can be restarted after an interruption without redoing hours of training.
 
-Steps
-  1  baselines           10 econometric/deep baselines + TFT, all folds
-  2  risk variants       2x2 train-time grid isolating the RQ2 changes:
+Steps (note: 9 runs between 3 and 4)
+  1  baselines           13 baselines, all folds: martingale null, HAR-RV,
+                         ARIMA, GARCH family, 6 deep models, TFT
+  2  risk variants       train-time grid isolating the RQ2 changes:
                            dist in {gaussian, student_t}
-                           vol_mode in {learned, garch_hybrid}
+                           vol_mode in {learned, garch_hybrid, har_hybrid}
                          (the third RQ2 change, rolling sigma calibration, is
                          an EVALUATION-time choice, so it is applied to every
                          run in step 6 rather than needing its own training)
   3  RQ3 variants        extended gate signals, per-timestep gating, and both
+  9  objective variants  lambda1 rebalancing, risk-only, ranking loss
   4  ablations           the 6 existing ablation configs
   5  seed ensemble       N seeds of the best config + the combined ensemble
   6  evaluate            every run under both global and rolling calibration
   7  stats/tables/plots
+  8  verify              anchor comparability + Wilcoxon coverage check
 
 Usage:
     python -m scripts.gpu_chain                 # everything
@@ -165,7 +168,9 @@ def verify_comparability(n_folds: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", nargs="*", type=int, default=None)
+    ap.add_argument("--only", nargs="*", type=int, default=None,
+                    help="steps: 1 baselines, 2 risk, 3 RQ3, 9 objectives, "
+                         "4 ablations, 5 seeds, 6 evaluate, 7 tables, 8 verify")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--n-folds", type=int, default=4)
     args = ap.parse_args()
