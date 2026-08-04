@@ -186,9 +186,14 @@ def main() -> None:
 
     if args.shard is not None:
         # Deterministic disjoint split so parallel workers never duplicate work.
-        # Round-robin over the (config, fold) plan keeps per-shard load balanced
-        # even though later folds train on strictly more data than earlier ones.
-        plan = [p for i, p in enumerate(plan) if i % args.nshards == args.shard]
+        #
+        # Shard by CONFIG, not by position in the (config, fold) plan. Folds
+        # differ a lot in cost -- the walk-forward window expands, so fold 3
+        # trains on roughly twice the data of fold 0 -- and round-robin over
+        # plan positions with nshards == n_folds degenerates into "one fold per
+        # shard" (measured: 8.3h vs 15.5h ETA for shards 0 and 3). Giving each
+        # shard every fold of a disjoint config subset balances by construction.
+        plan = [(s, k) for s, k in plan if s["cfg"] % args.nshards == args.shard]
         logger.info("shard %d/%d -> %d trials", args.shard, args.nshards, len(plan))
 
     def execute(plan_items) -> None:
