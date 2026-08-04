@@ -197,3 +197,85 @@ def test_wilcoxon_detects_better_model():
     assert r_better["pvalue"] < 0.01 and r_better["median_diff"] < 0
     r_same = wilcoxon_paired(same, base_err)
     assert r_same["pvalue"] > 0.01
+
+
+# --------------------------------------------------------------------------- #
+# Diebold-Mariano and multiple-comparison corrections
+# --------------------------------------------------------------------------- #
+
+def test_dm_detects_a_genuinely_better_model():
+    from src.stats_tests import diebold_mariano
+
+    n = 1000
+    err_b = np.abs(RNG.normal(0, 1, n))
+    err_a = err_b * 0.7                       # A clearly better
+    r = diebold_mariano(err_a, err_b, horizon=10)
+    assert r["DM"] < 0 and r["pvalue"] < 0.01
+
+
+def test_dm_accepts_equivalent_models():
+    from src.stats_tests import diebold_mariano
+
+    n = 1000
+    err_a = np.abs(RNG.normal(0, 1, n))
+    err_b = np.abs(RNG.normal(0, 1, n))
+    assert diebold_mariano(err_a, err_b, horizon=10)["pvalue"] > 0.05
+
+
+def test_dm_is_more_conservative_than_wilcoxon_under_autocorrelation():
+    """The reason DM was added.
+
+    Build a loss differential with a small mean but strong serial correlation,
+    exactly what overlapping 10-day forecasts produce. Wilcoxon treats the
+    samples as independent and returns a tiny p-value; DM's HAC variance
+    accounts for the dependence and is far less certain.
+    """
+    from src.stats_tests import diebold_mariano, wilcoxon_paired
+
+    n = 2000
+    rng = np.random.default_rng(7)
+    # AR(1) with high persistence -> effective sample size far below n
+    d = np.zeros(n)
+    for t in range(1, n):
+        d[t] = 0.95 * d[t - 1] + rng.normal(0, 0.1)
+    d = d + 0.05                                   # small positive mean
+    err_b = np.abs(rng.normal(0, 1, n))
+    err_a = err_b + d
+
+    w = wilcoxon_paired(err_a, err_b)
+    dm = diebold_mariano(err_a, err_b, horizon=10)
+    assert dm["pvalue"] > w["pvalue"], (
+        f"DM ({dm['pvalue']:.3g}) must be more conservative than "
+        f"Wilcoxon ({w['pvalue']:.3g}) under serial correlation")
+
+
+def test_holm_bonferroni_properties():
+    from src.stats_tests import holm_bonferroni
+
+    p = [0.001, 0.01, 0.04, 0.5]
+    adj = holm_bonferroni(p)
+    assert all(a >= b for a, b in zip(adj, p))     # never decreases a p-value
+    assert adj == sorted(adj)                       # monotone in sorted input
+    assert all(a <= 1.0 for a in adj)
+    # a single test is unchanged
+    assert np.isclose(holm_bonferroni([0.03])[0], 0.03)
+
+
+def test_benjamini_hochberg_is_less_strict_than_holm():
+    from src.stats_tests import benjamini_hochberg, holm_bonferroni
+
+    p = [0.001, 0.008, 0.02, 0.03, 0.2, 0.6]
+    bh = benjamini_hochberg(p)
+    holm = holm_bonferroni(p)
+    assert all(b <= h + 1e-12 for b, h in zip(bh, holm))
+    assert all(b >= x - 1e-12 for b, x in zip(bh, p))
+
+
+def test_corrections_handle_nan_pvalues():
+    from src.stats_tests import benjamini_hochberg, holm_bonferroni
+
+    p = [0.01, np.nan, 0.3]
+    for fn in (holm_bonferroni, benjamini_hochberg):
+        adj = fn(p)
+        assert np.isnan(adj[1])
+        assert np.isfinite(adj[0]) and np.isfinite(adj[2])
