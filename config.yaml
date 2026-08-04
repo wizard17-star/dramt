@@ -8,7 +8,18 @@ seed: 42
 
 device:
   prefer_cuda: true          # will fall back to cpu automatically if unavailable
-  amp: true                  # mixed precision (CUDA only; ignored on CPU)
+  # Mixed precision is implemented and verified working (bf16 autocast over the
+  # forward pass, fp32 loss; see src/train.py:amp_context). It is DISABLED on
+  # measurement, not on principle: benchmarked on this RTX 5070, one fold-0
+  # training run took
+  #     amp=true   34.7s (T=40,d=256,L=4)   32.2s (T=10,d=128,L=2)
+  #     amp=false  27.6s (T=40,d=256,L=4)   27.3s (T=10,d=128,L=2)
+  # i.e. AMP is ~25% SLOWER. At d_model<=256, batch_size 32 and ~36 optimizer
+  # steps/epoch the run is kernel-launch-bound rather than matmul-bound, so
+  # autocast's per-op casting is pure overhead. fp32 also keeps the volatility
+  # head exact, which matters for the RQ2 risk-calibration work.
+  # Set to true to re-enable (e.g. if batch_size or d_model grows a lot).
+  amp: false
 
 paths:
   raw_dir: data/raw

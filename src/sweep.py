@@ -1,15 +1,41 @@
-"""Reduced hyperparameter sweep for DRAM-T (CPU budget).
+"""Full-capacity hyperparameter sweep for DRAM-T (GPU budget).
 
-Grid (from config.yaml sweep lists): d_model x lambda1 x lambda2 x lr x T.
-Selection protocol: each config is trained on FOLD 0 ONLY and scored by its
-best composite validation loss (covers point error + vol NLL + corr Frobenius,
-i.e. both accuracy and risk calibration); the winning config is then trained
-on all folds by src/train.py. Sweeping on a single fold keeps the CPU cost
-tractable and never touches any test data.
+Grid (from config.yaml sweep lists):
+    T x d_model x n_layers x lambda1 x lambda2 x lr
+
+Selection protocol
+------------------
+Each config is trained and scored by its best VALIDATION loss; no test data is
+ever touched. Two selection modes:
+
+  --folds 0      score on fold 0 only (the CPU-era protocol, kept for
+                 reproducibility of the earlier results)
+  --folds all    train every config on all K folds and score by the MEAN
+                 validation score across folds (more robust config choice:
+                 it cannot latch onto a single fold's regime)
+
+Because composite validation losses are NOT comparable across configs with
+different lambdas (a bigger lambda mechanically inflates the total), every
+config is scored with the SAME fixed reference weights applied to its
+per-component validation losses at its best epoch:
+
+    score = l_point + 0.1 * l_vol + 0.1 * l_corr
+
+Cost control
+------------
+--stage1-fold-0 --topk K runs the full grid on fold 0, then promotes only the
+K best configs to the remaining folds and re-scores them on the mean across
+all folds. This is a successive-halving style budget saver; it still selects
+on all-fold validation performance, just without paying for the whole grid on
+every fold. Use --folds all for the exhaustive version.
+
+The run is RESUMABLE: completed (config, fold) pairs are appended to
+runs/sweep/trials.csv and skipped on restart.
 
 Usage:
-    python -m src.sweep [--suffix _nosent]
-Writes runs/sweep/results.csv and runs/sweep/best.yaml.
+    python -m src.sweep --folds all
+    python -m src.sweep --stage1-fold-0 --topk 12
+Writes runs/sweep/trials.csv, runs/sweep/results.csv and runs/sweep/best.yaml.
 """
 from __future__ import annotations
 
@@ -19,6 +45,7 @@ import itertools
 import json
 import logging
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -31,74 +58,188 @@ from src.utils.seed import get_device
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+TRIAL_FIELDS = [
+    "cfg", "fold", "T", "d_model", "n_layers", "lambda1", "lambda2", "lr",
+    "score", "val_point", "val_vol", "val_corr", "best_epoch", "seconds",
+]
+
+
+def build_grid(base: dict) -> list[dict]:
+    combos = itertools.product(
+        base["windowing"]["T_sweep"],
+        base["model"]["d_model_sweep"],
+        base["model"]["n_layers_sweep"],
+        base["loss"]["lambda1_sweep"],
+        base["loss"]["lambda2_sweep"],
+        [float(lr) for lr in base["training"]["lr_sweep"]],
+    )
+    return [
+        {"cfg": i, "T": T, "d_model": d, "n_layers": L,
+         "lambda1": l1, "lambda2": l2, "lr": lr}
+        for i, (T, d, L, l1, l2, lr) in enumerate(combos)
+    ]
+
+
+def load_done(path: Path) -> set[tuple[int, int]]:
+    """Completed (cfg, fold) pairs, so a long sweep can resume after a crash."""
+    if not path.exists():
+        return set()
+    with open(path, newline="", encoding="utf-8") as f:
+        return {(int(r["cfg"]), int(r["fold"])) for r in csv.DictReader(f)}
+
+
+def append_trial(path: Path, row: dict) -> None:
+    new = not path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=TRIAL_FIELDS)
+        if new:
+            w.writeheader()
+        w.writerow({k: row[k] for k in TRIAL_FIELDS})
+
+
+def run_trial(base: dict, spec: dict, fold_k: int, suffix: str,
+              max_epochs: int | None, device, dataset_cache: dict) -> dict:
+    exp = {
+        "name": f"sweep/cfg{spec['cfg']:03d}", "T": spec["T"], "d_model": spec["d_model"],
+        "n_layers": spec["n_layers"], "lambda1": spec["lambda1"],
+        "lambda2": spec["lambda2"], "lr": spec["lr"], "dataset_suffix": suffix,
+    }
+    if max_epochs is not None:
+        exp["max_epochs"] = max_epochs
+    ecfg = resolve_config(base, exp)
+
+    T = spec["T"]
+    if T not in dataset_cache:
+        dataset_cache[T] = load_dataset(Path(base["paths"]["processed_dir"]), T, suffix)
+    data = dataset_cache[T]
+    folds = walk_forward_folds(
+        len(data["anchor_dates"]), n_folds=base["splits"]["n_folds"],
+        val_frac_of_fold=base["splits"]["val_frac_of_fold"],
+        purge_gap=T + int(max(data["horizons"])),
+    )
+    run_dir = Path(base["paths"]["runs_dir"]) / ecfg.name
+    t0 = time.time()
+    result = train_fold(base, ecfg, data, folds[fold_k], run_dir, device)
+    vc = result["best_val_components"]
+    return {
+        **spec, "fold": fold_k,
+        "score": vc["l_point"] + 0.1 * vc["l_vol"] + 0.1 * vc["l_corr"],
+        "val_point": vc["l_point"], "val_vol": vc["l_vol"], "val_corr": vc["l_corr"],
+        "best_epoch": result["best_epoch"], "seconds": round(time.time() - t0, 1),
+    }
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suffix", default="_nosent")
-    parser.add_argument("--max-epochs", type=int, default=20, help="epoch cap during sweep")
+    parser.add_argument("--suffix", default="", help="dataset suffix ('' = with sentiment)")
+    parser.add_argument("--max-epochs", type=int, default=None,
+                        help="epoch cap during sweep (default: config max_epochs)")
+    parser.add_argument("--folds", default="all", help="'all' or a fold index, e.g. '0'")
+    parser.add_argument("--stage1-fold-0", action="store_true",
+                        help="full grid on fold 0, then promote --topk configs to all folds")
+    parser.add_argument("--topk", type=int, default=12)
+    parser.add_argument("--limit", type=int, default=None,
+                        help="debug: only run the first N configs")
     args = parser.parse_args()
 
     base = load_config("config.yaml")
     device = get_device(base["device"]["prefer_cuda"])
-    grid = list(itertools.product(
-        base["windowing"]["T_sweep"],
-        base["model"]["d_model_sweep"],
-        base["loss"]["lambda1_sweep"],
-        base["loss"]["lambda2_sweep"],
-        [float(lr) for lr in base["training"]["lr_sweep"]],
-    ))
-    logger.info("sweep: %d configs on fold 0 (device=%s, suffix=%r)", len(grid), device, args.suffix)
+    n_folds = base["splits"]["n_folds"]
+    grid = build_grid(base)
+    if args.limit:
+        grid = grid[: args.limit]
 
     sweep_dir = Path(base["paths"]["runs_dir"]) / "sweep"
     sweep_dir.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for i, (T, d_model, lam1, lam2, lr) in enumerate(grid):
-        exp = {
-            "name": f"sweep/cfg{i:02d}", "T": T, "d_model": d_model,
-            "lambda1": lam1, "lambda2": lam2, "lr": lr,
-            "dataset_suffix": args.suffix, "max_epochs": args.max_epochs,
-        }
-        ecfg = resolve_config(base, exp)
-        data = load_dataset(Path(base["paths"]["processed_dir"]), T, args.suffix)
-        folds = walk_forward_folds(
-            len(data["anchor_dates"]), n_folds=base["splits"]["n_folds"],
-            val_frac_of_fold=base["splits"]["val_frac_of_fold"],
-            purge_gap=T + int(max(data["horizons"])),
-        )
-        run_dir = Path(base["paths"]["runs_dir"]) / ecfg.name
-        t0 = time.time()
-        result = train_fold(base, ecfg, data, folds[0], run_dir, device)
-        # Composite val losses are NOT comparable across configs with different
-        # lambdas (bigger lambda => mechanically bigger total). Score every
-        # config with the same FIXED reference weights on its per-component
-        # validation losses at the best epoch.
-        vc = result["best_val_components"]
-        score = vc["l_point"] + 0.1 * vc["l_vol"] + 0.1 * vc["l_corr"]
-        row = {
-            "cfg": i, "T": T, "d_model": d_model, "lambda1": lam1, "lambda2": lam2,
-            "lr": lr, "score": score,
-            "val_point": vc["l_point"], "val_vol": vc["l_vol"], "val_corr": vc["l_corr"],
-            "best_epoch": result["best_epoch"],
-            "seconds": round(time.time() - t0, 1),
-        }
-        rows.append(row)
-        logger.info("cfg %02d/%d done: score=%.4f point=%.4f (%.0fs)", i, len(grid) - 1,
-                    score, vc["l_point"], row["seconds"])
+    trials_path = sweep_dir / "trials.csv"
+    done = load_done(trials_path)
+    cache: dict[int, dict] = {}
 
-    rows.sort(key=lambda r: r["score"])
-    with open(sweep_dir / "results.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+    if args.stage1_fold_0:
+        plan = [(s, 0) for s in grid]
+        logger.info("sweep stage 1: %d configs on fold 0 (device=%s)", len(grid), device)
+    elif args.folds == "all":
+        plan = [(s, k) for s in grid for k in range(n_folds)]
+        logger.info("sweep: %d configs x %d folds = %d trials (device=%s)",
+                    len(grid), n_folds, len(plan), device)
+    else:
+        k = int(args.folds)
+        plan = [(s, k) for s in grid]
+        logger.info("sweep: %d configs on fold %d (device=%s)", len(grid), k, device)
 
-    best = rows[0]
+    def execute(plan_items) -> None:
+        todo = [(s, k) for s, k in plan_items if (s["cfg"], k) not in done]
+        logger.info("%d trials to run (%d already done, resuming)",
+                    len(todo), len(plan_items) - len(todo))
+        t_start = time.time()
+        for i, (spec, k) in enumerate(todo):
+            row = run_trial(base, spec, k, args.suffix, args.max_epochs, device, cache)
+            append_trial(trials_path, row)
+            done.add((spec["cfg"], k))
+            elapsed = time.time() - t_start
+            eta = elapsed / (i + 1) * (len(todo) - i - 1)
+            logger.info(
+                "trial %d/%d cfg%03d fold%d (T=%d d=%d L=%d lr=%.0e) score=%.4f "
+                "%.0fs | elapsed %.1fh eta %.1fh",
+                i + 1, len(todo), spec["cfg"], k, spec["T"], spec["d_model"],
+                spec["n_layers"], spec["lr"], row["score"], row["seconds"],
+                elapsed / 3600, eta / 3600,
+            )
+
+    execute(plan)
+
+    if args.stage1_fold_0:
+        with open(trials_path, newline="", encoding="utf-8") as f:
+            fold0 = [r for r in csv.DictReader(f) if int(r["fold"]) == 0]
+        fold0.sort(key=lambda r: float(r["score"]))
+        promoted = {int(r["cfg"]) for r in fold0[: args.topk]}
+        logger.info("stage 2: promoting %d configs to folds 1..%d: %s",
+                    len(promoted), n_folds - 1, sorted(promoted))
+        execute([(s, k) for s in grid if s["cfg"] in promoted
+                 for k in range(1, n_folds)])
+
+    # ---- aggregate: mean validation score across the folds each config ran on
+    with open(trials_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    by_cfg: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_cfg[int(r["cfg"])].append(r)
+
+    spec_by_cfg = {s["cfg"]: s for s in grid}
+    agg = []
+    for cfg, rs in by_cfg.items():
+        if cfg not in spec_by_cfg:
+            continue
+        scores = [float(r["score"]) for r in rs]
+        agg.append({
+            **spec_by_cfg[cfg],
+            "n_folds_scored": len(rs),
+            "score_mean": sum(scores) / len(scores),
+            "score_max": max(scores),
+            "val_point_mean": sum(float(r["val_point"]) for r in rs) / len(rs),
+            "val_vol_mean": sum(float(r["val_vol"]) for r in rs) / len(rs),
+            "val_corr_mean": sum(float(r["val_corr"]) for r in rs) / len(rs),
+            "seconds_total": round(sum(float(r["seconds"]) for r in rs), 1),
+        })
+
+    # Prefer configs scored on more folds; among those, lowest mean val score.
+    max_folds = max(a["n_folds_scored"] for a in agg)
+    ranked = sorted([a for a in agg if a["n_folds_scored"] == max_folds],
+                    key=lambda a: a["score_mean"])
+    with open(sweep_dir / "results.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(agg[0].keys()))
+        w.writeheader()
+        w.writerows(sorted(agg, key=lambda a: (-a["n_folds_scored"], a["score_mean"])))
+
+    best = ranked[0]
     best_yaml = {
-        "name": "dramt_full", "T": best["T"], "d_model": best["d_model"],
-        "lambda1": best["lambda1"], "lambda2": best["lambda2"], "lr": best["lr"],
+        "name": "dramt_full", "T": int(best["T"]), "d_model": int(best["d_model"]),
+        "n_layers": int(best["n_layers"]), "lambda1": float(best["lambda1"]),
+        "lambda2": float(best["lambda2"]), "lr": float(best["lr"]),
         "dataset_suffix": args.suffix,
     }
     (sweep_dir / "best.yaml").write_text(yaml.safe_dump(best_yaml), encoding="utf-8")
-    logger.info("sweep done. best: %s", json.dumps(best))
+    logger.info("sweep done. best (over %d folds): %s", max_folds, json.dumps(best))
 
 
 if __name__ == "__main__":

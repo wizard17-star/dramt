@@ -52,10 +52,15 @@ class CorrHead(nn.Module):
         self.register_buffer("tril_idx", idx, persistent=False)
 
     def forward(self, pooled: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """pooled: (B, d) -> (R, L) with R: (B,S,S) correlation, L: (B,S,S)."""
+        """pooled: (B, d) -> (R, L) with R: (B,S,S) correlation, L: (B,S,S).
+
+        The Cholesky construction and the D^{-1/2} normalization are forced to
+        float32 even under autocast: reduced precision here would perturb the
+        rsqrt of near-zero diagonals and can push R off the unit diagonal.
+        """
         B = pooled.shape[0]
-        params = self.proj(pooled)                                    # (B, n_tril)
-        L = pooled.new_zeros(B, self.S, self.S)
+        params = self.proj(pooled).float()                            # (B, n_tril)
+        L = params.new_zeros(B, self.S, self.S)
         L[:, self.tril_idx[0], self.tril_idx[1]] = params
         diag = torch.diagonal(L, dim1=1, dim2=2)
         diag_pos = nn.functional.softplus(diag) + self.eps
