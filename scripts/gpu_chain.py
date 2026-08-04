@@ -72,6 +72,9 @@ RQ3_VARIANTS = [
 ]
 
 ENSEMBLE_SEEDS = list(range(42, 52))   # 10 seeds
+# Ablations get several seeds because the measured single-seed effects
+# (+0.00076 .. -0.00040 MAE) were smaller than the seed spread (0.00053).
+ABLATION_SEEDS = [42, 43, 44, 45, 46]
 
 
 def run(args: list[str], label: str = "") -> bool:
@@ -278,10 +281,14 @@ def main() -> None:
     if jobs:
         run_many(jobs, args.parallel)
 
-    # ---- 4. ablations ----------------------------------------------------
-    # Kept serial: src.ablation loops over its 6 configs inside one process.
+    # ---- 4. ablations, multiple seeds each --------------------------------
+    # Single-seed ablation deltas were smaller than the seed noise floor, so
+    # each configuration is run over several seeds and the table reports
+    # mean +/- seed std. Kept serial: src.ablation loops internally.
     if want(4):
-        run(["src.ablation", "--suffix", ""], "ablations")
+        run(["src.ablation", "--suffix", "",
+             "--seeds", *[str(s) for s in ABLATION_SEEDS]],
+            f"ablations x {len(ABLATION_SEEDS)} seeds")
 
     # ---- 5b. build the ensemble (needs every member finished) -------------
     if want(5):
@@ -302,6 +309,8 @@ def main() -> None:
         run(["src.stats_tests", "--reference", "dramt_ensemble"], "significance tests")
         run(["src.tables"], "LaTeX/CSV tables")
         run(["src.utils.plotting", "--run", "dramt_ensemble"], "figures")
+        # news-stratified accuracy + volatility-targeting economic evaluation
+        run(["src.analysis"], "news strata + economic value")
 
     # ---- 8. consistency check --------------------------------------------
     if want(8):

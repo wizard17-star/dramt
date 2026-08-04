@@ -134,6 +134,9 @@ def build_tables() -> None:
         raise SystemExit("results/eval_summary.csv missing - run src.evaluate first")
 
     is_ablation = summary["run"].str.startswith("ablation_")
+    # SEED_RE is anchored to ^dramt_seed\d+$, so per-seed ablation runs
+    # (ablation_<cfg>_s<seed>) are caught by is_ablation and never reach the
+    # seed-robustness table.
     is_seed = summary["run"].str.match(SEED_RE)
     is_objective = summary["run"].isin(OBJECTIVE_RUNS)
 
@@ -186,25 +189,52 @@ def build_tables() -> None:
            "Expected Shortfall test (nominal breach rate 5\\%).", "tab:risk")
 
     # ---- ablations ------------------------------------------------------
+    # Grouped over seeds. The +/- is the SEED spread, not the fold spread:
+    # single-seed ablation deltas here are smaller than the seed noise floor,
+    # so an effect is only credible if it exceeds this column.
     if len(ablations):
+        ablations = ablations.copy()
+        ablations["config"] = ablations["run"].str.replace(r"_s\d+$", "", regex=True)
         order = ["ablation_full", "ablation_no_sentiment", "ablation_no_macro",
                  "ablation_static_fusion", "ablation_point_only",
                  "ablation_numerical_only"]
-        ablations["__o"] = ablations["run"].map({n: i for i, n in enumerate(order)})
-        ablations = ablations.sort_values("__o")
-        dfa = pd.DataFrame([{
-            "Configuration": r["label"],
-            "MAE": _fmt(_v(r, "MAE"), _v(r, "MAE_std")),
-            "RMSE": _fmt(_v(r, "RMSE"), _v(r, "RMSE_std")),
-            "DirAcc": _fmt(_v(r, "DirAcc"), _v(r, "DirAcc_std"), 3),
-            "Vol RMSE": _fmt(_v(r, "VolRMSE"), _v(r, "VolRMSE_std")),
-            "CRPS": _fmt(_v(r, "CRPS"), _v(r, "CRPS_std")),
-            "VaR breach (\\%)": (f"{100 * _v(r, 'VaRBreach'):.2f}"
-                                 if not _isnan(_v(r, "VaRBreach")) else "--"),
-        } for _, r in ablations.iterrows()])
+        rank = {n: i for i, n in enumerate(order)}
+
+        full_mae = np.nan
+        grp = ablations.groupby("config")
+        if "ablation_full" in grp.groups:
+            full_mae = float(grp.get_group("ablation_full")["MAE"].mean())
+
+        rows = []
+        for cfg, g in grp:
+            n_seeds = len(g)
+            mae_mean = float(g["MAE"].mean())
+            mae_sd = float(g["MAE"].std(ddof=1)) if n_seeds > 1 else np.nan
+            delta = mae_mean - full_mae if np.isfinite(full_mae) else np.nan
+            row = {
+                "__o": rank.get(cfg, 99),
+                "Configuration": MODEL_LABELS.get(cfg, cfg),
+                "seeds": n_seeds,
+                "MAE": _fmt(mae_mean, mae_sd),
+                "$\\Delta$MAE vs full": ("--" if cfg == "ablation_full" or _isnan(delta)
+                                         else f"{delta:+.5f}"),
+                "DirAcc": _fmt(float(g["DirAcc"].mean()),
+                               float(g["DirAcc"].std(ddof=1)) if n_seeds > 1 else None, 3),
+            }
+            if "VolRMSE" in g.columns and g["VolRMSE"].notna().any():
+                row["Vol RMSE"] = _fmt(float(g["VolRMSE"].mean()),
+                                       float(g["VolRMSE"].std(ddof=1)) if n_seeds > 1 else None)
+                row["VaR breach (\\%)"] = (f"{100 * float(g['VaRBreach'].mean()):.2f}"
+                                           if g["VaRBreach"].notna().any() else "--")
+            else:
+                row["Vol RMSE"] = row["VaR breach (\\%)"] = "--"
+            rows.append(row)
+        dfa = pd.DataFrame(rows).sort_values("__o").drop(columns="__o")
         _write(dfa, results_dir, "tables_ablation",
-               "Ablation study: each component removed in turn (mean across folds).",
-               "tab:ablation")
+               "Ablation study: each component removed in turn. Values are mean "
+               "$\\pm$ standard deviation ACROSS SEEDS (folds averaged within a "
+               "seed). An effect is only interpretable if $\\Delta$MAE exceeds "
+               "the seed spread.", "tab:ablation")
 
     # ---- headline comparison -------------------------------------------
     dfc = pd.DataFrame([{
