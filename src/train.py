@@ -55,6 +55,9 @@ class ExperimentConfig:
     risk_head: bool
     dataset_suffix: str          # "" or "_nosent"
     seed: int
+    dist: str                    # "gaussian" | "student_t"
+    sigma_calibration: str       # "global" | "rolling"
+    vol_mode: str                # "learned" | "garch_hybrid"
 
 
 def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
@@ -82,6 +85,10 @@ def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
         risk_head=exp.get("risk_head", True),
         dataset_suffix=exp.get("dataset_suffix", ""),
         seed=int(exp.get("seed", base["seed"])),
+        dist=exp.get("dist", base.get("risk", {}).get("dist", "gaussian")),
+        sigma_calibration=exp.get(
+            "sigma_calibration", base.get("risk", {}).get("sigma_calibration", "global")),
+        vol_mode=exp.get("vol_mode", base.get("risk", {}).get("vol_mode", "learned")),
     )
 
 
@@ -179,6 +186,7 @@ def predict(model, loader, device, target_scale: float, amp: bool = False):
     """Returns raw-unit predictions: mu, sigma (n,S,H); corr (n,S,S); weights (n,M)."""
     model.eval()
     mus, sigmas, corrs, weights = [], [], [], []
+    df = np.array([])
     for xn, xm, xs, reg, *_ in loader:
         with amp_context(device, amp):
             out = model(xn.to(device), xm.to(device), xs.to(device), reg.to(device))
@@ -187,11 +195,18 @@ def predict(model, loader, device, target_scale: float, amp: bool = False):
         sigmas.append(out["sigma"].cpu().numpy())
         corrs.append(out["corr"].cpu().numpy())
         weights.append(out["modality_weights"].cpu().numpy())
+        if "df" in out:
+            # (1,1,H) and constant across the batch -> store the per-horizon vector
+            df = out["df"].reshape(-1).cpu().numpy()
     return {
         "mu": np.concatenate(mus) / target_scale,
+        # NOTE: sigma is a standard deviation under dist="gaussian" and a t
+        # SCALE under dist="student_t". Both divide by target_scale the same
+        # way; the scale->std conversion is applied downstream in evaluate.py.
         "sigma": np.concatenate(sigmas) / target_scale,
         "corr": np.concatenate(corrs),
         "weights": np.concatenate(weights),
+        "df": df,
     }
 
 
@@ -218,8 +233,10 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
         ffn_mult=ecfg.ffn_mult, dropout=ecfg.dropout,
         use_sentiment=ecfg.use_sentiment, use_macro=ecfg.use_macro,
         dynamic_weighting=ecfg.dynamic_weighting, risk_head=ecfg.risk_head,
+        dist=ecfg.dist,
     ).to(device)
-    loss_fn = CompositeLoss(ecfg.lambda1, ecfg.lambda2, risk_head=ecfg.risk_head)
+    loss_fn = CompositeLoss(ecfg.lambda1, ecfg.lambda2, risk_head=ecfg.risk_head,
+                            dist=ecfg.dist)
     optimizer = torch.optim.Adam(model.parameters(), lr=ecfg.lr, weight_decay=ecfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 
@@ -266,7 +283,9 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     val_preds = predict(model, loaders["val"], device, ecfg.target_scale, amp=amp)
     np.savez_compressed(fold_dir / "val_predictions.npz",
                         mu=val_preds["mu"], sigma=val_preds["sigma"],
-                        y_ret=data["y_ret"][fold.val_idx])
+                        df=val_preds["df"],
+                        y_ret=data["y_ret"][fold.val_idx],
+                        anchor_dates=data["anchor_dates"][fold.val_idx])
     preds = predict(model, loaders["test"], device, ecfg.target_scale, amp=amp)
     y_true = data["y_ret"][fold.test_idx]
     pm = point_metrics(y_true, preds["mu"])
@@ -278,7 +297,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     }
     np.savez_compressed(fold_dir / "test_predictions.npz",
                         mu=preds["mu"], sigma=preds["sigma"], corr=preds["corr"],
-                        weights=preds["weights"], y_ret=y_true,
+                        weights=preds["weights"], df=preds["df"], y_ret=y_true,
                         y_vol=data["y_vol"][fold.test_idx],
                         y_corr=data["y_corr"][fold.test_idx],
                         test_idx=fold.test_idx,

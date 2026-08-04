@@ -89,6 +89,86 @@ def test_ablation_flags(kw, n_mod):
         assert torch.allclose(out["modality_weights"], torch.full((B, n_mod), 1.0 / n_mod))
 
 
+def test_student_t_head_shapes_and_constraints():
+    model = _make_model(dist="student_t")
+    out = model(*_make_inputs())
+    assert "df" in out
+    assert out["df"].shape == (1, 1, H)              # broadcasts over (B,S,H)
+    assert (out["df"] > 2.0).all(), "nu must stay > 2 so the variance is finite"
+
+
+def test_gaussian_head_has_no_df():
+    out = _make_model(dist="gaussian")(*_make_inputs())
+    assert "df" not in out
+
+
+def test_student_t_nll_matches_scipy():
+    """The hand-written likelihood must agree with scipy's t log-pdf."""
+    from scipy import stats as sps
+
+    from src.losses import student_t_nll
+
+    y = torch.tensor([[[0.4, -1.2]]])
+    mu = torch.tensor([[[0.1, 0.3]]])
+    s = torch.tensor([[[0.8, 1.5]]])
+    nu = torch.tensor([[[4.0, 7.0]]])
+    got = student_t_nll(y, mu, s, nu).numpy().ravel()
+    want = -sps.t.logpdf(y.numpy().ravel(), df=nu.numpy().ravel(),
+                         loc=mu.numpy().ravel(), scale=s.numpy().ravel())
+    np.testing.assert_allclose(got, want, rtol=1e-5)
+
+
+def test_student_t_df_is_learnable():
+    """nu must actually receive gradient - otherwise the 'learnable df' claim
+    is false and the head silently stays at its initial value."""
+    from src.losses import CompositeLoss
+
+    model = _make_model(dist="student_t")
+    out = model(*_make_inputs())
+    y_ret = torch.randn(B, S, H) * 2.0
+    y_corr = torch.eye(S).expand(B, S, S)
+    CompositeLoss(0.1, 0.1, dist="student_t")(out, y_ret, y_corr)["loss"].backward()
+    assert model.df_raw.grad is not None
+    assert model.df_raw.grad.abs().sum() > 0
+
+
+def test_student_t_nll_prefers_heavy_tails_on_heavy_tailed_data():
+    """On t(3) data a t likelihood must score better (lower NLL) than a
+    Gaussian one - the premise of the whole RQ2 change.
+
+    gaussian_nll drops the 0.5*log(2*pi) constant while student_t_nll is a
+    complete NLL, so the constant must be restored before comparing.
+    """
+    from src.losses import GAUSSIAN_NLL_CONST, gaussian_nll, student_t_nll
+
+    torch.manual_seed(3)
+    y = torch.distributions.StudentT(3.0).sample((20000,))
+    mu = torch.zeros_like(y)
+    s = torch.ones_like(y)
+    t_nll = student_t_nll(y, mu, s, torch.full_like(y, 3.0)).mean()
+    n_nll = gaussian_nll(y, mu, s).mean() + GAUSSIAN_NLL_CONST
+    assert t_nll < n_nll
+
+    # ...and the best-fit Gaussian (scale = sample std) is still worse
+    n_nll_best = (gaussian_nll(y, mu, torch.full_like(y, float(y.std()))).mean()
+                  + GAUSSIAN_NLL_CONST)
+    assert t_nll < n_nll_best
+
+
+def test_gaussian_nll_constant_matches_scipy():
+    """gaussian_nll + GAUSSIAN_NLL_CONST must equal the true Gaussian NLL."""
+    from scipy import stats as sps
+
+    from src.losses import GAUSSIAN_NLL_CONST, gaussian_nll
+
+    y = torch.tensor([0.4, -1.2])
+    mu = torch.tensor([0.1, 0.3])
+    s = torch.tensor([0.8, 1.5])
+    got = (gaussian_nll(y, mu, s) + GAUSSIAN_NLL_CONST).numpy()
+    want = -sps.norm.logpdf(y.numpy(), loc=mu.numpy(), scale=s.numpy())
+    np.testing.assert_allclose(got, want, rtol=1e-6)
+
+
 def test_gradients_flow_to_all_modalities():
     model = _make_model()
     x = _make_inputs()

@@ -10,13 +10,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.stats_tests import bootstrap_ci, wilcoxon_paired
 from src.utils.var_es import (
+    acerbi_szekely_z2,
     breaches,
     christoffersen_independence,
     crps_normal,
+    crps_student_t,
     interval_coverage,
+    interval_coverage_t,
     kupiec_pof,
     portfolio_moments,
+    student_t_std_factor,
     var_es_normal,
+    var_es_student_t,
 )
 
 RNG = np.random.default_rng(0)
@@ -85,6 +90,95 @@ def test_crps_closed_form_and_ordering():
     # perfect deterministic-ish forecast: tiny sigma at the true mean is best possible
     exact = crps_normal(np.zeros(n), np.zeros(n), np.full(n, 1e-6))
     assert exact < 1e-4
+
+
+# --------------------------------------------------------------------------- #
+# Student-t risk layer
+# --------------------------------------------------------------------------- #
+
+def test_student_t_converges_to_normal_as_df_grows():
+    """t_nu -> N(0,1) as nu -> inf, so every t routine must reproduce its
+    Gaussian counterpart in the limit."""
+    mu, s = np.zeros(1), np.ones(1)
+    var_t, es_t = var_es_student_t(mu, s, 1e7, 0.95)
+    var_n, es_n = var_es_normal(mu, s, 0.95)
+    assert np.allclose(var_t, var_n, atol=1e-4)
+    assert np.allclose(es_t, es_n, atol=1e-4)
+    y = np.array([0.3])
+    assert abs(crps_student_t(y, mu, s, 1e6) - crps_normal(y, mu, s)) < 1e-4
+
+
+def test_student_t_var_es_match_empirical_quantiles():
+    """Closed forms vs the empirical tail of a large t sample."""
+    for nu in (3.0, 5.0):
+        var, es = var_es_student_t(np.zeros(1), np.ones(1), nu, 0.95)
+        x = RNG.standard_t(nu, 2_000_000)
+        assert abs(var[0] - (-np.quantile(x, 0.05))) < 0.02
+        assert abs(es[0] - (-x[x < -var[0]].mean())) < 0.05
+
+
+def test_student_t_has_fatter_tails_than_normal():
+    """The whole point of switching: at the same scale, t must put more mass
+    beyond the 95% VaR, which is what should pull the breach rate down."""
+    var_t, es_t = var_es_student_t(np.zeros(1), np.ones(1), 4.0, 0.95)
+    var_n, es_n = var_es_normal(np.zeros(1), np.ones(1), 0.95)
+    assert var_t[0] > var_n[0]
+    assert es_t[0] > es_n[0]
+
+
+def test_student_t_crps_ordering():
+    nu = 5.0
+    y = RNG.standard_t(nu, 20000)
+    n = len(y)
+    good = crps_student_t(y, np.zeros(n), np.ones(n), nu)
+    over = crps_student_t(y, np.zeros(n), np.full(n, 3.0), nu)
+    biased = crps_student_t(y, np.full(n, 2.0), np.ones(n), nu)
+    assert good < over
+    assert good < biased
+
+
+def test_student_t_std_factor():
+    assert np.isclose(student_t_std_factor(5.0), np.sqrt(5 / 3))
+    # nu -> inf: scale and std coincide
+    assert np.isclose(student_t_std_factor(1e8), 1.0, atol=1e-6)
+
+
+def test_interval_coverage_t_is_calibrated():
+    nu, n = 5.0, 200000
+    y = RNG.standard_t(nu, n)
+    cov = interval_coverage_t(y, np.zeros(n), np.ones(n), nu, 0.95)
+    assert abs(cov - 0.95) < 0.01
+    # scoring t data with a normal interval of the same scale under-covers
+    cov_wrong = interval_coverage(y, np.zeros(n), np.ones(n), 0.95)
+    assert cov_wrong < cov
+
+
+# --------------------------------------------------------------------------- #
+# Acerbi-Szekely ES backtest
+# --------------------------------------------------------------------------- #
+
+def test_acerbi_szekely_accepts_correct_model():
+    n = 3000
+    mu_p, sig_p = np.zeros(n), np.full(n, 0.02)
+    var, es = var_es_normal(mu_p, sig_p, 0.95)
+    realized = RNG.normal(0, 0.02, n)
+    r = acerbi_szekely_z2(realized, var, es, 0.95, n_sim=500,
+                          mu_p=mu_p, scale_p=sig_p)
+    assert abs(r["Z2"]) < 0.25          # near zero under a correct model
+    assert r["pvalue"] > 0.05           # not rejected
+
+
+def test_acerbi_szekely_flags_understated_tail_risk():
+    """Data is 2x more volatile than the model claims: realized exceedances
+    are far worse than the predicted ES, so Z2 must go clearly negative."""
+    n = 3000
+    mu_p, sig_p = np.zeros(n), np.full(n, 0.02)
+    var, es = var_es_normal(mu_p, sig_p, 0.95)
+    realized = RNG.normal(0, 0.04, n)
+    r = acerbi_szekely_z2(realized, var, es, 0.95, n_sim=500,
+                          mu_p=mu_p, scale_p=sig_p)
+    assert r["Z2"] < -0.5
+    assert r["pvalue"] < 0.05
 
 
 def test_bootstrap_ci_contains_mean():

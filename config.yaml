@@ -141,6 +141,26 @@ var:
   horizon_days: 10
   confidence: 0.95
 
+risk:
+  # Predictive distribution of the volatility head.
+  #   gaussian   - original spec: sigma is a standard deviation
+  #   student_t  - heavier tails, learnable per-horizon nu; sigma becomes a
+  #                t SCALE (std = scale * sqrt(nu/(nu-2)))
+  # Motivation: the Gaussian head produced an 11.9% 10-day VaR breach rate
+  # against a nominal 5% (Kupiec rejects).
+  dist: gaussian
+  # Post-hoc sigma calibration fitted on validation / already-resolved
+  # residuals only.
+  #   global   - one constant multiplier per fold (original)
+  #   rolling  - per-anchor multiplier over the last `calibration_window`
+  #              resolved residuals, so it tracks regime shifts inside a fold
+  sigma_calibration: global
+  calibration_window: 120
+  # Volatility construction.
+  #   learned       - sigma straight from the VolHead
+  #   garch_hybrid  - sigma = learned multiplier x GARCH(1,1) filtered vol
+  vol_mode: learned
+
 logging:
   log_every_n_steps: 20
   use_wandb: false

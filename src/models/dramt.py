@@ -88,12 +88,26 @@ class DRAMT(nn.Module):
         use_macro: bool = True,
         dynamic_weighting: bool = True,
         risk_head: bool = True,
+        dist: str = "gaussian",
     ) -> None:
         super().__init__()
         self.use_sentiment = use_sentiment
         self.use_macro = use_macro
         self.dynamic_weighting = dynamic_weighting
         self.risk_head = risk_head
+        self.dist = dist
+
+        if dist == "student_t":
+            # One learnable degrees-of-freedom per HORIZON, shared across
+            # stocks. Sharing across stocks is deliberate: with a common nu at
+            # a given horizon the 5-stock vector is multivariate-t, and then
+            # w'r is exactly t_nu(w'mu, w'(D R D)w) -- so the portfolio VaR
+            # aggregation stays exact instead of being an approximation.
+            # Per-horizon (rather than global) because tail heaviness of
+            # cumulative returns shrinks as the horizon lengthens.
+            # nu = 2 + softplus(raw) keeps nu > 2, i.e. finite variance, which
+            # student_t_std_factor() needs to convert scale -> std.
+            self.df_raw = nn.Parameter(torch.full((n_horizons,), 1.6))  # nu ~ 3.9
 
         self.enc_num = ModalityEncoder(n_num_features, d_model, n_heads, ffn_mult, dropout)
         if use_macro:
@@ -167,4 +181,8 @@ class DRAMT(nn.Module):
         pooled = horizon_repr.mean(dim=1)                         # (B,d)
         R, L = self.corr_head(pooled)                             # (B,S,S)
 
-        return {"mu": mu, "sigma": sigma, "corr": R, "chol": L, "modality_weights": w}
+        out = {"mu": mu, "sigma": sigma, "corr": R, "chol": L, "modality_weights": w}
+        if self.dist == "student_t":
+            # (1,1,H) so it broadcasts against (B,S,H) targets
+            out["df"] = (2.0 + nn.functional.softplus(self.df_raw)).view(1, 1, -1)
+        return out

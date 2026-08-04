@@ -142,6 +142,79 @@ def test_walk_forward_folds():
     assert folds[0].test_idx.max() < folds[1].val_idx.min() + len(folds[1].val_idx)
 
 
+def _write_fold_npz(tmpdir: Path, n_val=150, n_test=120, S=5, H=3,
+                    horizons=(1, 5, 10), test_sigma_boost=1.0, seed=7):
+    """Minimal val/test prediction pair in the on-disk format evaluate.py reads."""
+    rng = np.random.default_rng(seed)
+    hs = np.array(horizons)
+    sig_v = np.full((n_val, S, H), 0.02)
+    y_v = rng.normal(0, 0.02, (n_val, S, H))
+    np.savez_compressed(tmpdir / "val_predictions.npz", mu=np.zeros((n_val, S, H)),
+                        sigma=sig_v, df=np.array([]), y_ret=y_v)
+    sig_t = np.full((n_test, S, H), 0.02)
+    y_t = rng.normal(0, 0.02 * test_sigma_boost, (n_test, S, H))
+    np.savez_compressed(tmpdir / "test_predictions.npz", mu=np.zeros((n_test, S, H)),
+                        sigma=sig_t, corr=np.tile(np.eye(S), (n_test, 1, 1)),
+                        df=np.array([]), y_ret=y_t,
+                        y_vol=np.full((n_test, S, H), 0.02),
+                        y_corr=np.tile(np.eye(S), (n_test, 1, 1)),
+                        test_idx=np.arange(n_test),
+                        anchor_dates=np.arange(n_test))
+    return tmpdir / "test_predictions.npz", hs
+
+
+def test_rolling_sigma_calibration_no_lookahead(tmp_path):
+    """The multiplier at test anchor i may only use residuals resolved by i.
+
+    Poisoning every test residual from anchor k onward must leave the
+    multipliers at anchors <= k untouched: a forecast made at anchor j for
+    horizon h is only observable at j+h, so anchor i can at most have seen
+    anchor i-h.
+    """
+    from src.evaluate import _rolling_sigma_scale
+
+    horizons = [1, 5, 10]
+    a = tmp_path / "a"
+    a.mkdir()
+    p_a, _ = _write_fold_npz(a, horizons=horizons)
+    s_a = _rolling_sigma_scale(p_a, horizons, window=60)
+
+    # same data, but the future (anchors >= k) is replaced with garbage
+    k = 60
+    b = tmp_path / "b"
+    b.mkdir()
+    p_b, _ = _write_fold_npz(b, horizons=horizons)
+    z = dict(np.load(p_b))
+    z["y_ret"][k:] = 99.0
+    np.savez_compressed(p_b, **z)
+    s_b = _rolling_sigma_scale(p_b, horizons, window=60)
+
+    for hi, h in enumerate(horizons):
+        # anchor i can legitimately have seen up to anchor i-h, so anchors
+        # up to k+h-1 must be unaffected by poisoning from k onward
+        safe = k + h - 1
+        np.testing.assert_allclose(s_a[:safe, 0, hi], s_b[:safe, 0, hi], rtol=1e-12)
+    # and the poison must actually show up later, otherwise the test is vacuous
+    assert not np.allclose(s_a[-1, 0, 0], s_b[-1, 0, 0])
+
+
+def test_rolling_sigma_calibration_tracks_regime_shift(tmp_path):
+    """A test block twice as volatile as validation must push the rolling
+    multiplier up toward 2, whereas the global val-fitted constant stays ~1."""
+    from src.evaluate import _rolling_sigma_scale, _val_sigma_scale
+
+    horizons = [1, 5, 10]
+    d = tmp_path / "shift"
+    d.mkdir()
+    p, _ = _write_fold_npz(d, n_test=300, horizons=horizons, test_sigma_boost=2.0)
+    s_roll = _rolling_sigma_scale(p, horizons, window=60)
+    s_glob = _val_sigma_scale(p)
+
+    assert abs(s_glob - 1.0) < 0.15          # fitted on val: blind to the shift
+    assert s_roll[0, 0, 0] < 1.3             # starts from the val-seeded pool
+    assert s_roll[-1, 0, 0] > 1.7            # adapts to the 2x regime
+
+
 def test_standardizer_train_only():
     rng = np.random.default_rng(3)
     X = rng.normal(5.0, 2.0, size=(100, 10, 4))
