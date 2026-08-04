@@ -101,16 +101,22 @@ def run_many(jobs: list[tuple[list[str], str]], parallel: int) -> None:
     parallel=1 reproduces the original serial behaviour exactly.
     """
     if parallel <= 1:
-        for args, label in jobs:
-            run(args, label)
-        return
+        results = [(label, run(args, label)) for args, label in jobs]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        print(f"[chain] running {len(jobs)} jobs with {parallel} workers", flush=True)
+        # Threads, not processes: each job is an independent subprocess, so the
+        # GIL is irrelevant and this only needs to supervise them.
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            oks = list(pool.map(lambda j: run(*j), jobs))
+        results = list(zip([label for _, label in jobs], oks))
 
-    from concurrent.futures import ThreadPoolExecutor
-    print(f"[chain] running {len(jobs)} jobs with {parallel} workers", flush=True)
-    # Threads, not processes: each job is an independent subprocess, so the
-    # GIL is irrelevant and this only needs to supervise them.
-    with ThreadPoolExecutor(max_workers=parallel) as pool:
-        list(pool.map(lambda j: run(*j), jobs))
+    # A failed job only prints one FAIL line, which is easy to lose among
+    # dozens of interleaved parallel logs. Summarise explicitly.
+    failed = [label for label, ok in results if not ok]
+    print(f"[chain] {len(results) - len(failed)}/{len(results)} jobs OK", flush=True)
+    if failed:
+        print(f"[chain] *** {len(failed)} FAILED: {failed}", flush=True)
 
 
 def done(run_name: str, n_folds: int = 4) -> bool:
@@ -145,6 +151,21 @@ def write_exp(name: str, best: dict, **overrides) -> Path:
     return path
 
 
+def expected_run_names() -> list[str]:
+    """Every run the chain is supposed to produce."""
+    from src.ablation import ABLATIONS
+    from src.baselines import DEEP_MODELS, ECONOMETRIC_MODELS, SPECIAL_MODELS
+
+    names = [f"baseline_{m}" for m in ECONOMETRIC_MODELS + DEEP_MODELS + SPECIAL_MODELS]
+    names += [n for n, _, _ in RISK_VARIANTS]
+    names += [n for n, _, _ in RQ3_VARIANTS]
+    names += [n for n, _, _, _ in OBJECTIVE_VARIANTS]
+    names += [f"dramt_seed{s}" for s in ENSEMBLE_SEEDS]
+    names += ["dramt_ensemble"]
+    names += [f"ablation_{c}_s{s}" for c in ABLATIONS for s in ABLATION_SEEDS]
+    return names
+
+
 def verify_comparability(n_folds: int) -> None:
     """Fail loudly if the results are not actually comparable.
 
@@ -167,8 +188,25 @@ def verify_comparability(n_folds: int) -> None:
             continue
         anchors[d.name] = np.concatenate([np.load(p)["anchor_dates"] for p in paths])
 
+    # A run that failed outright is simply ABSENT from every table, which no
+    # anchor check can notice. Compare against what the chain intended to build.
+    # This must run even when NOTHING completed - that is the loudest failure.
+    expected = expected_run_names()
+    missing = [r for r in expected if r not in anchors]
+    incomplete = [r for r in expected
+                  if r in anchors
+                  and len(list((RUNS / r).glob("fold*/test_predictions.npz"))) < n_folds]
+    print(f"[chain] runs present: {len(anchors)} / {len(expected)} expected", flush=True)
+    if missing:
+        print(f"[chain] *** MISSING {len(missing)} run(s): "
+              f"{missing if len(missing) <= 15 else missing[:15] + ['...']}", flush=True)
+    if incomplete:
+        print(f"[chain] *** INCOMPLETE (<{n_folds} folds): {incomplete}", flush=True)
+    if not missing and not incomplete:
+        print("[chain] OK: every expected run is present and complete", flush=True)
+
     if not anchors:
-        print("[chain] WARNING: no completed runs found to verify", flush=True)
+        print("[chain] WARNING: no completed runs to compare anchors across", flush=True)
         return
 
     ref_name, ref = next(iter(anchors.items()))
