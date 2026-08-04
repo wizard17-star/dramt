@@ -218,6 +218,41 @@ def test_garch_hybrid_multiplier_is_trainable():
     assert model.vol_head.proj.weight.grad.abs().sum() > 0
 
 
+def test_mc_dropout_enables_only_dropout_layers():
+    """LayerNorm must stay in eval mode: a blanket model.train() would change
+    normalization statistics too, and the spread would no longer be a pure
+    dropout posterior sample."""
+    from src.train import _enable_mc_dropout
+
+    model = _make_model()
+    _enable_mc_dropout(model)
+    for m in model.modules():
+        if isinstance(m, torch.nn.Dropout):
+            assert m.training
+        elif isinstance(m, torch.nn.LayerNorm):
+            assert not m.training
+
+
+def test_mc_dropout_produces_nonzero_epistemic_spread():
+    """Stochastic passes must actually differ, else 'epistemic uncertainty'
+    would silently be a column of zeros."""
+    from src.train import _enable_mc_dropout
+
+    model = _make_model()
+    x = _make_inputs()
+    _enable_mc_dropout(model)
+    with torch.no_grad():
+        a = model(*x)["mu"]
+        b = model(*x)["mu"]
+    assert not torch.allclose(a, b)
+    # ...and deterministic eval mode must NOT differ
+    model.eval()
+    with torch.no_grad():
+        c = model(*x)["mu"]
+        d = model(*x)["mu"]
+    torch.testing.assert_close(c, d)
+
+
 def test_gradients_flow_to_all_modalities():
     model = _make_model()
     x = _make_inputs()

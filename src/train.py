@@ -192,6 +192,54 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0, amp
     return {k: v / n for k, v in totals.items()}
 
 
+def _enable_mc_dropout(model: torch.nn.Module) -> None:
+    """Put ONLY the dropout layers back into training mode.
+
+    MC-dropout needs stochastic masks at inference, but LayerNorm must keep
+    using its inference statistics -- a blanket model.train() would change the
+    normalization too and the resulting spread would not be a pure dropout
+    posterior sample.
+    """
+    model.eval()
+    for m in model.modules():
+        if isinstance(m, torch.nn.Dropout):
+            m.train()
+
+
+@torch.no_grad()
+def mc_dropout_predict(model, loader, device, target_scale: float,
+                       n_samples: int = 50, amp: bool = False) -> dict[str, np.ndarray]:
+    """Epistemic uncertainty via Monte-Carlo dropout (Gal & Ghahramani, 2016).
+
+    Runs `n_samples` stochastic forward passes and returns the mean prediction
+    plus the across-pass standard deviation of mu, which estimates MODEL
+    (epistemic) uncertainty -- distinct from the vol head's ALEATORIC sigma.
+
+    The two combine as independent variance components:
+        sigma_total^2 = sigma_aleatoric^2 + sigma_epistemic^2
+    (applied in evaluate.py, not here, so the raw components stay inspectable).
+    """
+    _enable_mc_dropout(model)
+    mu_samples, sigma_samples = [], []
+    for _ in range(n_samples):
+        mus, sigmas = [], []
+        for xn, xm, xs, reg, gv, *_ in loader:
+            with amp_context(device, amp):
+                out = model(xn.to(device), xm.to(device), xs.to(device),
+                            reg.to(device), gv.to(device))
+            mus.append(out["mu"].float().cpu().numpy())
+            sigmas.append(out["sigma"].float().cpu().numpy())
+        mu_samples.append(np.concatenate(mus))
+        sigma_samples.append(np.concatenate(sigmas))
+    model.eval()
+    mu_stack = np.stack(mu_samples)                 # (n_samples, n, S, H)
+    return {
+        "mu_mc": mu_stack.mean(axis=0) / target_scale,
+        "sigma_epistemic": mu_stack.std(axis=0, ddof=1) / target_scale,
+        "sigma_aleatoric_mc": np.stack(sigma_samples).mean(axis=0) / target_scale,
+    }
+
+
 @torch.no_grad()
 def predict(model, loader, device, target_scale: float, amp: bool = False):
     """Returns raw-unit predictions: mu, sigma (n,S,H); corr (n,S,S); weights (n,M)."""
@@ -312,6 +360,14 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                         y_ret=data["y_ret"][fold.val_idx],
                         anchor_dates=data["anchor_dates"][fold.val_idx])
     preds = predict(model, loaders["test"], device, ecfg.target_scale, amp=amp)
+
+    mc_samples = int(base_cfg.get("risk", {}).get("mc_dropout_samples", 0))
+    mc = (mc_dropout_predict(model, loaders["test"], device, ecfg.target_scale,
+                             n_samples=mc_samples, amp=amp)
+          if mc_samples > 0 and ecfg.dropout > 0 else
+          {"mu_mc": np.array([]), "sigma_epistemic": np.array([]),
+           "sigma_aleatoric_mc": np.array([])})
+
     y_true = data["y_ret"][fold.test_idx]
     pm = point_metrics(y_true, preds["mu"])
     result = {
@@ -322,7 +378,9 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     }
     np.savez_compressed(fold_dir / "test_predictions.npz",
                         mu=preds["mu"], sigma=preds["sigma"], corr=preds["corr"],
-                        weights=preds["weights"], df=preds["df"], y_ret=y_true,
+                        weights=preds["weights"], df=preds["df"],
+                        mu_mc=mc["mu_mc"], sigma_epistemic=mc["sigma_epistemic"],
+                        sigma_aleatoric_mc=mc["sigma_aleatoric_mc"], y_ret=y_true,
                         y_vol=data["y_vol"][fold.test_idx],
                         y_corr=data["y_corr"][fold.test_idx],
                         test_idx=fold.test_idx,

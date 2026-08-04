@@ -160,6 +160,11 @@ risk:
   #   learned       - sigma straight from the VolHead
   #   garch_hybrid  - sigma = learned multiplier x GARCH(1,1) filtered vol
   vol_mode: learned
+  # MC-dropout forward passes at prediction time for EPISTEMIC uncertainty
+  # (0 disables). The vol head's sigma is aleatoric; the two combine as
+  # sigma_total^2 = sigma_aleatoric^2 + sigma_epistemic^2 when evaluate.py is
+  # run with --include-epistemic.
+  mc_dropout_samples: 50
 
 logging:
   log_every_n_steps: 20

@@ -129,7 +129,8 @@ def _rolling_sigma_scale(npz_path: Path, horizons: list[int], window: int = 120,
 def evaluate_fold(npz_path: Path, horizons: list[int], weights: np.ndarray,
                   static_corr: np.ndarray | None, conf: float = 0.95,
                   sigma_units: str = "per_day", calibration: str = "global",
-                  window: int = 120, es_backtest: bool = True) -> dict:
+                  window: int = 120, es_backtest: bool = True,
+                  include_epistemic: bool = False) -> dict:
     """sigma_units: DRAM-T-family models train sigma via Gaussian NLL against
     the CUMULATIVE h-day return, so their stored sigma is in "cumulative"
     units; econometric models store per-day conditional vol ("per_day").
@@ -148,6 +149,20 @@ def evaluate_fold(npz_path: Path, horizons: list[int], weights: np.ndarray,
     out: dict = {"point": point_metrics(y_ret, mu)}
     if sigma is None:
         return out
+
+    # MC-dropout epistemic component, added as an independent variance term:
+    #     sigma_total^2 = sigma_aleatoric^2 + sigma_epistemic^2
+    # Applied BEFORE calibration so the post-hoc multiplier sees the same
+    # quantity it will scale at prediction time.
+    if include_epistemic and "sigma_epistemic" in z.files and z["sigma_epistemic"].size:
+        eps_sigma = z["sigma_epistemic"]
+        out["epistemic"] = {
+            "mean_sigma_epistemic": float(eps_sigma.mean()),
+            "mean_sigma_aleatoric": float(sigma.mean()),
+            "epistemic_share": float(
+                (eps_sigma ** 2).mean() / ((eps_sigma ** 2).mean() + (sigma ** 2).mean())),
+        }
+        sigma = np.sqrt(sigma ** 2 + eps_sigma ** 2)
 
     # Post-hoc sigma calibration (fitted on validation / already-resolved test
     # residuals only -- never on the anchor being calibrated; see the two
@@ -233,6 +248,8 @@ def main() -> None:
                         help="rolling calibration window in anchors")
     parser.add_argument("--no-es-backtest", action="store_true",
                         help="skip the (simulation-based) Acerbi-Szekely ES test")
+    parser.add_argument("--include-epistemic", action="store_true",
+                        help="add the MC-dropout epistemic variance to sigma")
     parser.add_argument("--suffix", default="",
                         help="append to output filenames, e.g. '_rolling'")
     args = parser.parse_args()
@@ -270,7 +287,8 @@ def main() -> None:
             per_fold.append(evaluate_fold(
                 p, horizons, weights, static_corr, sigma_units=sigma_units,
                 calibration=calibration, window=window,
-                es_backtest=not args.no_es_backtest))
+                es_backtest=not args.no_es_backtest,
+                include_epistemic=args.include_epistemic))
         (results_dir / f"eval_{run.replace('/', '_')}{args.suffix}.json").write_text(
             json.dumps(per_fold, indent=2, default=float))
 
