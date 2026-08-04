@@ -55,19 +55,43 @@ class ModalityEncoder(nn.Module):
 class GatingMLP(nn.Module):
     """Item 6: regime-conditioned softmax weights over active modalities.
 
-    Regime signal (B, n_regime) is computed by the data pipeline from recent
-    realized volatility, return sign, and macro level (see train.py); the MLP
-    maps it to input-dependent modality weights.
+    The regime signal (B, n_regime) comes from the data pipeline. With
+    regime_signals='extended' it carries VIX level and slope, trailing average
+    portfolio correlation and drawdown in addition to the original four
+    (see src/data/regime.py) - the RQ3 hypothesis being that the original
+    4-dim signal was too coarse to identify when a modality should dominate.
+
+    per_timestep=False  ->  one weight vector per sample,   (B, M)
+    per_timestep=True   ->  a weight vector per TIME STEP,  (B, T, M)
+
+    Per-timestep gating conditions on the regime AND on the fused token at
+    that step, so the model can shift modality emphasis WITHIN a window (e.g.
+    lean on news around an earnings day inside an otherwise quiet month)
+    rather than only across windows.
     """
 
-    def __init__(self, n_regime: int, n_modalities: int, hidden: int = 32) -> None:
+    def __init__(self, n_regime: int, n_modalities: int, hidden: int = 32,
+                 per_timestep: bool = False, d_model: int | None = None) -> None:
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(n_regime, hidden), nn.GELU(), nn.Linear(hidden, n_modalities),
-        )
+        self.per_timestep = per_timestep
+        if per_timestep:
+            if d_model is None:
+                raise ValueError("per-timestep gating needs d_model")
+            self.reg_proj = nn.Linear(n_regime, hidden)
+            self.tok_proj = nn.Linear(d_model, hidden)
+            self.out = nn.Sequential(nn.GELU(), nn.Linear(hidden, n_modalities))
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(n_regime, hidden), nn.GELU(), nn.Linear(hidden, n_modalities),
+            )
 
-    def forward(self, regime: torch.Tensor) -> torch.Tensor:  # (B, M) softmax weights
-        return torch.softmax(self.mlp(regime), dim=-1)
+    def forward(self, regime: torch.Tensor,
+                tokens: torch.Tensor | None = None) -> torch.Tensor:
+        if not self.per_timestep:
+            return torch.softmax(self.mlp(regime), dim=-1)             # (B,M)
+        # tokens: (B,M,T,d) -> per-step summary (B,T,d)
+        h = self.reg_proj(regime).unsqueeze(1) + self.tok_proj(tokens.mean(dim=1))
+        return torch.softmax(self.out(h), dim=-1)                       # (B,T,M)
 
 
 class DRAMT(nn.Module):
@@ -90,6 +114,7 @@ class DRAMT(nn.Module):
         risk_head: bool = True,
         dist: str = "gaussian",
         vol_mode: str = "learned",
+        gate_per_timestep: bool = False,
     ) -> None:
         super().__init__()
         self.use_sentiment = use_sentiment
@@ -123,7 +148,8 @@ class DRAMT(nn.Module):
                 for _ in range(self.n_modalities)
             ])
             if dynamic_weighting:
-                self.gate = GatingMLP(n_regime_features, self.n_modalities)
+                self.gate = GatingMLP(n_regime_features, self.n_modalities,
+                                      per_timestep=gate_per_timestep, d_model=d_model)
 
         self.backbone = nn.ModuleList([
             EncoderLayer(d_model, n_heads, ffn_mult, dropout) for _ in range(n_layers)
@@ -161,8 +187,15 @@ class DRAMT(nn.Module):
         # item 6: fuse with input-dependent weights (or static mean)
         stacked = torch.stack(tokens, dim=1)                     # (B,M,T,d)
         if self.n_modalities > 1 and self.dynamic_weighting:
-            w = self.gate(regime)                                 # (B,M)
-            fused = (stacked * w.unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            if self.gate.per_timestep:
+                w_t = self.gate(regime, stacked)                  # (B,T,M)
+                fused = (stacked * w_t.permute(0, 2, 1).unsqueeze(-1)).sum(dim=1)
+                # report the window-average weights so the logged/plotted
+                # modality_weights stay (B,M) across both gating modes
+                w = w_t.mean(dim=1)                               # (B,M)
+            else:
+                w = self.gate(regime)                             # (B,M)
+                fused = (stacked * w.unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
         else:
             w = torch.full(
                 (x_num.shape[0], self.n_modalities),

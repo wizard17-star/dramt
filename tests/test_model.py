@@ -253,6 +253,51 @@ def test_mc_dropout_produces_nonzero_epistemic_spread():
     torch.testing.assert_close(c, d)
 
 
+def test_extended_regime_gate_accepts_8_signals():
+    model = DRAMT(
+        n_num_features=F_NUM, n_macro_features=F_MAC, n_sent_features=F_SEN,
+        n_regime_features=8, n_stocks=S, n_horizons=H,
+        d_model=32, n_heads=4, n_layers=2, dropout=0.1,
+    )
+    x = _make_inputs()
+    out = model(x[0], x[1], x[2], torch.randn(B, 8))
+    assert out["modality_weights"].shape == (B, 3)
+
+
+def test_per_timestep_gate_shapes_and_variation():
+    """Per-timestep gating must produce genuinely different weights at
+    different steps; otherwise it is just the per-window gate with extra cost.
+    """
+    from src.models.dramt import GatingMLP
+
+    gate = GatingMLP(n_regime=8, n_modalities=3, per_timestep=True, d_model=32)
+    regime = torch.randn(B, 8)
+    tokens = torch.randn(B, 3, T, 32)
+    w = gate(regime, tokens)
+    assert w.shape == (B, T, 3)
+    torch.testing.assert_close(w.sum(-1), torch.ones(B, T), rtol=1e-5, atol=1e-5)
+    # weights must vary across time steps
+    assert w.std(dim=1).max() > 1e-4
+
+
+def test_per_timestep_gate_reports_window_average_weights():
+    model = _make_model(gate_per_timestep=True)
+    out = model(*_make_inputs())
+    w = out["modality_weights"]
+    assert w.shape == (B, 3)                       # same shape as per-window mode
+    torch.testing.assert_close(w.sum(-1), torch.ones(B), rtol=1e-5, atol=1e-5)
+
+
+def test_per_timestep_gate_responds_to_regime():
+    model = _make_model(gate_per_timestep=True)
+    model.eval()
+    x = _make_inputs()
+    with torch.no_grad():
+        a = model(*x)["modality_weights"]
+        b = model(x[0], x[1], x[2], x[3] + 5.0)["modality_weights"]
+    assert not torch.allclose(a, b)
+
+
 def test_gradients_flow_to_all_modalities():
     model = _make_model()
     x = _make_inputs()

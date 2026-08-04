@@ -117,6 +117,15 @@ model:
   default_n_layers: 2
   dropout: 0.2
   ffn_mult: 2
+  # Gating network input (RQ3). "basic" = the original 4 signals (recent vol,
+  # return sign, macro level, news presence). "extended" adds VIX level, VIX
+  # slope, trailing average portfolio correlation and drawdown. The extra
+  # signals go to the GATE ONLY, never into X_num, so a change in results is
+  # attributable to better gating rather than to more input features.
+  regime_signals: basic
+  # Produce one modality weight vector per TIME STEP instead of one per
+  # window, letting emphasis shift within a window.
+  gate_per_timestep: false
 
 loss:
   lambda1_sweep: [0.1, 0.5]   # volatility NLL weight

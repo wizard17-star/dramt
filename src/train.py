@@ -58,6 +58,8 @@ class ExperimentConfig:
     dist: str                    # "gaussian" | "student_t"
     sigma_calibration: str       # "global" | "rolling"
     vol_mode: str                # "learned" | "garch_hybrid"
+    regime_signals: str          # "basic" (4 dims) | "extended" (8 dims)
+    gate_per_timestep: bool
 
 
 def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
@@ -89,6 +91,9 @@ def resolve_config(base: dict, exp: dict) -> ExperimentConfig:
         sigma_calibration=exp.get(
             "sigma_calibration", base.get("risk", {}).get("sigma_calibration", "global")),
         vol_mode=exp.get("vol_mode", base.get("risk", {}).get("vol_mode", "learned")),
+        regime_signals=exp.get("regime_signals", m.get("regime_signals", "basic")),
+        gate_per_timestep=bool(exp.get("gate_per_timestep",
+                                       m.get("gate_per_timestep", False))),
     )
 
 
@@ -126,7 +131,8 @@ def regime_features(X_num: np.ndarray, X_macro: np.ndarray, X_sent: np.ndarray,
 
 
 def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float,
-                 garch_vol: np.ndarray | None = None):
+                 garch_vol: np.ndarray | None = None,
+                 regime_extra: np.ndarray | None = None):
     """Standardize on train only; scale targets; build regime features.
 
     `garch_vol` (n_anchors, S, H) is the fold's GARCH(1,1) cumulative volatility
@@ -140,12 +146,21 @@ def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float,
     sent_cols = [str(c) for c in data["sent_cols"]]
 
     scalers = {k: Standardizer().fit(data[k][fold.train_idx]) for k in ("X_num", "X_macro", "X_sent")}
+    # extra gate signals are raw-scaled -> z-score them on TRAIN anchors only
+    if regime_extra is not None:
+        ex_mean = regime_extra[fold.train_idx].mean(axis=0)
+        ex_std = regime_extra[fold.train_idx].std(axis=0)
+        ex_std = np.where(ex_std < 1e-12, 1.0, ex_std)
+
     parts = {}
     for split, idx in (("train", fold.train_idx), ("val", fold.val_idx), ("test", fold.test_idx)):
         Xn = scalers["X_num"].transform(data["X_num"][idx])
         Xm = scalers["X_macro"].transform(data["X_macro"][idx])
         Xs = scalers["X_sent"].transform(data["X_sent"][idx])
         reg = regime_features(Xn, Xm, Xs, num_cols, macro_cols, sent_cols)
+        if regime_extra is not None:
+            ex = ((regime_extra[idx] - ex_mean) / ex_std).astype(np.float32)
+            reg = np.concatenate([reg, ex], axis=1)
         gv = (garch_vol[idx] * target_scale if garch_vol is not None
               else np.zeros_like(data["y_ret"][idx]))
         parts[split] = TensorDataset(
@@ -275,19 +290,28 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     amp = bool(base_cfg["device"].get("amp", False))
     set_seed(ecfg.seed + fold.k)
 
-    garch_vol = None
-    if ecfg.vol_mode == "garch_hybrid":
+    garch_vol, regime_extra = None, None
+    if ecfg.vol_mode == "garch_hybrid" or ecfg.regime_signals == "extended":
         import pandas as pd
-
-        from src.data.garch_vol import load_or_build
         processed = Path(base_cfg["paths"]["processed_dir"])
         daily = pd.read_parquet(processed / "aligned_daily.parquet")
-        garch_vol = load_or_build(
-            processed, daily, base_cfg["portfolio"]["members"],
-            data["anchor_dates"], fold.train_idx,
-            [int(h) for h in data["horizons"]], ecfg.T, fold.k, ecfg.dataset_suffix,
-        )
-    parts, _ = prepare_fold(data, fold, ecfg.target_scale, garch_vol)
+
+        if ecfg.vol_mode == "garch_hybrid":
+            from src.data.garch_vol import load_or_build
+            garch_vol = load_or_build(
+                processed, daily, base_cfg["portfolio"]["members"],
+                data["anchor_dates"], fold.train_idx,
+                [int(h) for h in data["horizons"]], ecfg.T, fold.k, ecfg.dataset_suffix,
+            )
+        if ecfg.regime_signals == "extended":
+            from src.data.regime import build_extended_regime
+            regime_extra = build_extended_regime(
+                daily, Path(base_cfg["paths"]["raw_dir"]),
+                base_cfg["portfolio"]["members"],
+                pd.to_datetime(data["anchor_dates"], unit="ns"),
+            )
+    parts, _ = prepare_fold(data, fold, ecfg.target_scale, garch_vol, regime_extra)
+    n_regime = parts["train"].tensors[3].shape[1]
     g = torch.Generator().manual_seed(ecfg.seed + fold.k)
     loaders = {
         "train": DataLoader(parts["train"], batch_size=ecfg.batch_size, shuffle=True, generator=g),
@@ -299,7 +323,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
         n_num_features=data["X_num"].shape[-1],
         n_macro_features=data["X_macro"].shape[-1],
         n_sent_features=data["X_sent"].shape[-1],
-        n_regime_features=4,
+        n_regime_features=n_regime,
         n_stocks=data["y_ret"].shape[1],
         n_horizons=data["y_ret"].shape[2],
         d_model=ecfg.d_model, n_heads=ecfg.n_heads, n_layers=ecfg.n_layers,
@@ -307,6 +331,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
         use_sentiment=ecfg.use_sentiment, use_macro=ecfg.use_macro,
         dynamic_weighting=ecfg.dynamic_weighting, risk_head=ecfg.risk_head,
         dist=ecfg.dist, vol_mode=ecfg.vol_mode,
+        gate_per_timestep=ecfg.gate_per_timestep,
     ).to(device)
     loss_fn = CompositeLoss(ecfg.lambda1, ecfg.lambda2, risk_head=ecfg.risk_head,
                             dist=ecfg.dist)

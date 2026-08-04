@@ -215,6 +215,62 @@ def test_rolling_sigma_calibration_tracks_regime_shift(tmp_path):
     assert s_roll[-1, 0, 0] > 1.7            # adapts to the 2x regime
 
 
+def test_extended_regime_signals_no_lookahead(tmp_path):
+    """Every extended gate signal at anchor t must use only rows <= t, so
+    poisoning the future must not change any earlier value."""
+    from src.data.regime import build_extended_regime
+
+    rng = np.random.default_rng(11)
+    n = 600
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    portfolio = ["AAPL", "GOOGL", "MSFT", "AMZN", "META"]
+    daily = pd.DataFrame(
+        {f"{t}_log_return": rng.normal(0, 0.01, n) for t in portfolio}, index=idx)
+
+    raw = tmp_path / "raw" / "equities"
+    raw.mkdir(parents=True)
+    vix = pd.DataFrame({"Close": 15 + rng.normal(0, 2, n)}, index=idx)
+    vix.index.name = "date"
+    vix.to_csv(raw / "IDX_VIX.csv")
+
+    a = build_extended_regime(daily, tmp_path / "raw", portfolio, idx)
+
+    # poison the future
+    k = 400
+    daily2 = daily.copy()
+    daily2.iloc[k:] = 99.0
+    vix2 = vix.copy()
+    vix2.iloc[k:] = 999.0
+    vix2.to_csv(raw / "IDX_VIX.csv")
+    b = build_extended_regime(daily2, tmp_path / "raw", portfolio, idx)
+
+    np.testing.assert_allclose(a[:k], b[:k], rtol=1e-10, atol=1e-10)
+    # and the poison must be visible afterwards, else the test proves nothing
+    assert not np.allclose(a[k:], b[k:])
+
+
+def test_extended_regime_drawdown_is_non_positive(tmp_path):
+    """Drawdown is measured from a trailing running maximum, so it can never
+    be positive - a positive value would mean the running max saw the future."""
+    from src.data.regime import build_extended_regime
+
+    rng = np.random.default_rng(12)
+    n = 400
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    portfolio = ["AAPL", "GOOGL", "MSFT", "AMZN", "META"]
+    daily = pd.DataFrame(
+        {f"{t}_log_return": rng.normal(0.001, 0.01, n) for t in portfolio}, index=idx)
+    raw = tmp_path / "raw" / "equities"
+    raw.mkdir(parents=True)
+    v = pd.DataFrame({"Close": 15 + rng.normal(0, 2, n)}, index=idx)
+    v.index.name = "date"
+    v.to_csv(raw / "IDX_VIX.csv")
+
+    out = build_extended_regime(daily, tmp_path / "raw", portfolio, idx)
+    drawdown = out[:, 3]
+    assert (drawdown <= 1e-9).all()
+
+
 def test_standardizer_train_only():
     rng = np.random.default_rng(3)
     X = rng.normal(5.0, 2.0, size=(100, 10, 4))
