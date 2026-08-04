@@ -34,7 +34,7 @@ from src.models.baselines.econometric import (
     garch_forecasts,
     garch_midas_forecasts,
 )
-from src.train import load_dataset, prepare_fold
+from src.train import amp_context, load_dataset, prepare_fold
 from src.utils.config import load_config
 from src.utils.metrics import point_metrics
 from src.utils.seed import get_device, set_seed
@@ -95,10 +95,13 @@ def train_deep_baseline(name: str, base: dict, data: dict, fold: Fold,
                                  weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 
+    amp = bool(base["device"].get("amp", False))
+
     def fwd(batch):
         xn, xm, xs, reg, y_ret, y_corr = [b.to(device) for b in batch]
-        pred = model(xn, xs) if name == "sentiment_lstm" else model(xn)
-        return loss_fn(pred, y_ret)
+        with amp_context(device, amp):
+            pred = model(xn, xs) if name == "sentiment_lstm" else model(xn)
+        return loss_fn(pred.float(), y_ret)
 
     best_val, bad, best_state = float("inf"), 0, None
     for epoch in range(t_cfg["max_epochs"]):
@@ -129,8 +132,9 @@ def train_deep_baseline(name: str, base: dict, data: dict, fold: Fold,
     with torch.no_grad():
         for batch in loaders["test"]:
             xn, xm, xs, *_ = [b.to(device) for b in batch]
-            p = model(xn, xs) if name == "sentiment_lstm" else model(xn)
-            preds.append(p.cpu().numpy())
+            with amp_context(device, amp):
+                p = model(xn, xs) if name == "sentiment_lstm" else model(xn)
+            preds.append(p.float().cpu().numpy())
     mu = np.concatenate(preds) / target_scale
     return _save_fold_result(run_dir / f"fold{fold.k}", fold, data, mu, None, None,
                              {"best_val_loss": best_val})

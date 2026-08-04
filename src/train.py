@@ -140,7 +140,16 @@ def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float):
     return parts, scalers
 
 
-def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0):
+def amp_context(device: torch.device, enabled: bool):
+    """bfloat16 autocast over the FORWARD pass only (CUDA). bf16 has the same
+    exponent range as fp32, so no GradScaler is needed and the composite loss
+    (log sigma^2, Gaussian NLL, Cholesky) stays numerically safe once outputs
+    are cast back to fp32 before the loss."""
+    use = bool(enabled) and device.type == "cuda"
+    return torch.autocast("cuda", dtype=torch.bfloat16, enabled=use)
+
+
+def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0, amp=False):
     training = optimizer is not None
     model.train(training)
     totals = {"loss": 0.0, "l_point": 0.0, "l_vol": 0.0, "l_corr": 0.0}
@@ -149,7 +158,9 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0):
         for xn, xm, xs, reg, y_ret, y_corr in loader:
             xn, xm, xs, reg = xn.to(device), xm.to(device), xs.to(device), reg.to(device)
             y_ret, y_corr = y_ret.to(device), y_corr.to(device)
-            out = model(xn, xm, xs, reg)
+            with amp_context(device, amp):
+                out = model(xn, xm, xs, reg)
+            out = {k: v.float() for k, v in out.items()}   # loss always in fp32
             losses = loss_fn(out, y_ret, y_corr)
             if training:
                 optimizer.zero_grad()
@@ -164,12 +175,14 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0):
 
 
 @torch.no_grad()
-def predict(model, loader, device, target_scale: float):
+def predict(model, loader, device, target_scale: float, amp: bool = False):
     """Returns raw-unit predictions: mu, sigma (n,S,H); corr (n,S,S); weights (n,M)."""
     model.eval()
     mus, sigmas, corrs, weights = [], [], [], []
     for xn, xm, xs, reg, *_ in loader:
-        out = model(xn.to(device), xm.to(device), xs.to(device), reg.to(device))
+        with amp_context(device, amp):
+            out = model(xn.to(device), xm.to(device), xs.to(device), reg.to(device))
+        out = {k: v.float() for k, v in out.items()}
         mus.append(out["mu"].cpu().numpy())
         sigmas.append(out["sigma"].cpu().numpy())
         corrs.append(out["corr"].cpu().numpy())
@@ -184,6 +197,7 @@ def predict(model, loader, device, target_scale: float):
 
 def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarray],
                fold: Fold, run_dir: Path, device: torch.device) -> dict:
+    amp = bool(base_cfg["device"].get("amp", False))
     set_seed(ecfg.seed + fold.k)
     parts, _ = prepare_fold(data, fold, ecfg.target_scale)
     g = torch.Generator().manual_seed(ecfg.seed + fold.k)
@@ -221,8 +235,9 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                          "val_loss", "val_point", "lr", "seconds"])
         for epoch in range(ecfg.max_epochs):
             t0 = time.time()
-            tr = run_epoch(model, loaders["train"], loss_fn, device, optimizer, ecfg.grad_clip)
-            va = run_epoch(model, loaders["val"], loss_fn, device)
+            tr = run_epoch(model, loaders["train"], loss_fn, device, optimizer,
+                           ecfg.grad_clip, amp=amp)
+            va = run_epoch(model, loaders["val"], loss_fn, device, amp=amp)
             scheduler.step(va["loss"])
             dt = time.time() - t0
             writer.writerow([epoch, f"{tr['loss']:.6f}", f"{tr['l_point']:.6f}",
@@ -248,11 +263,11 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
     # sigma calibration downstream — validation only, never test)
     ckpt = torch.load(fold_dir / "best.pt", weights_only=False)
     model.load_state_dict(ckpt["model"])
-    val_preds = predict(model, loaders["val"], device, ecfg.target_scale)
+    val_preds = predict(model, loaders["val"], device, ecfg.target_scale, amp=amp)
     np.savez_compressed(fold_dir / "val_predictions.npz",
                         mu=val_preds["mu"], sigma=val_preds["sigma"],
                         y_ret=data["y_ret"][fold.val_idx])
-    preds = predict(model, loaders["test"], device, ecfg.target_scale)
+    preds = predict(model, loaders["test"], device, ecfg.target_scale, amp=amp)
     y_true = data["y_ret"][fold.test_idx]
     pm = point_metrics(y_true, preds["mu"])
     result = {

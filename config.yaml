@@ -1,14 +1,14 @@
 # DRAM-T project configuration
-# NOTE: No local CUDA GPU was detected on this machine (Intel Iris Xe integrated
-# graphics only). All defaults below are tuned for CPU-only training: smaller
-# model width, fewer layers, smaller sweep grids, fewer epochs than the original
-# GPU-oriented spec. device is auto-detected at runtime (CUDA used if available).
+# NOTE: this machine HAS a CUDA GPU (NVIDIA RTX 5070, 12 GB, sm_120 Blackwell,
+# torch 2.11.0+cu128). The original GPU-oriented sweep grids and epoch budgets
+# from the project spec are therefore restored below (see notes.compute_history
+# for what the earlier CPU-only run used). device is auto-detected at runtime.
 
 seed: 42
 
 device:
   prefer_cuda: true          # will fall back to cpu automatically if unavailable
-  amp: false                 # AMP only enabled when running on CUDA
+  amp: true                  # mixed precision (CUDA only; ignored on CPU)
 
 paths:
   raw_dir: data/raw
@@ -88,10 +88,10 @@ technical_indicators:
   momentum_window: 10
 
 windowing:
-  T_sweep: [10, 20]        # reduced from {10,20,30,40} for CPU feasibility
+  T_sweep: [10, 20, 30, 40]        # full spec grid (GPU)
   default_T: 20
-  horizons: [1, 2, 3, 5, 8, 10]   # reduced multi-horizon set (1..10 subsampled), still covers 1-10 range
-  full_horizon_range: [1, 10]      # documented full spec; horizons list above is the practically-evaluated subset
+  horizons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]   # full 1-10 day multi-horizon set
+  full_horizon_range: [1, 10]
 
 splits:
   n_folds: 4
@@ -99,17 +99,17 @@ splits:
   val_frac_of_fold: 0.5     # split each rolling test window into val/test halves
 
 model:
-  d_model_sweep: [64, 128]        # reduced from {128,256} for CPU
-  default_d_model: 64
-  n_heads: 4                       # reduced from 8 (must divide d_model)
-  n_layers_sweep: [2]              # reduced from {2,3,4}
+  d_model_sweep: [128, 256]        # full spec grid (GPU)
+  default_d_model: 128
+  n_heads: 8                       # full spec (must divide d_model)
+  n_layers_sweep: [2, 3, 4]        # full spec grid (GPU)
   default_n_layers: 2
   dropout: 0.2
   ffn_mult: 2
 
 loss:
-  lambda1_sweep: [0.1, 0.5]   # volatility NLL weight, reduced grid
-  lambda2_sweep: [0.1, 0.5]   # correlation Frobenius weight, reduced grid
+  lambda1_sweep: [0.1, 0.5]   # volatility NLL weight
+  lambda2_sweep: [0.1, 0.5]   # correlation Frobenius weight
   lambda3_weight_decay: 1e-5
 
 training:
@@ -118,11 +118,11 @@ training:
   # MSE/NLL optimization (verified in M3 overfit diagnostics). Predictions
   # are divided back before metric computation.
   target_scale: 100.0
-  lr_sweep: [1e-4, 5e-4]      # reduced from log-grid across [1e-5,1e-3]
+  lr_sweep: [1e-5, 5e-5, 1e-4, 5e-4, 1e-3]   # full log-grid (GPU)
   default_lr: 1e-4
   batch_size: 32
-  max_epochs: 30               # reduced from larger GPU budget
-  early_stopping_patience: 5   # reduced from 10 for CPU wall-clock
+  max_epochs: 100
+  early_stopping_patience: 15
   grad_clip_norm: 1.0
   lr_schedule: plateau
 
@@ -136,10 +136,14 @@ logging:
 
 notes:
   compute_assumption: >
-    Original spec assumed a local CUDA GPU. This machine has no NVIDIA GPU
-    (Intel Iris Xe integrated graphics only, no CUDA support). All sweeps,
-    model width/depth, and epoch budgets above were reduced to keep full
-    walk-forward training tractable on CPU. If a CUDA GPU becomes available,
-    restore the original sweep grids (d_model {128,256}, n_layers {2,3,4},
-    T {10,20,30,40}, full horizons 1-10, lr log-grid [1e-5,1e-3]) and enable
-    device.amp.
+    Full-capacity GPU configuration (NVIDIA RTX 5070, 12 GB, CUDA 12.8):
+    d_model {128,256}, n_layers {2,3,4}, T {10,20,30,40}, full horizons 1-10,
+    lr log-grid [1e-5,1e-3], max_epochs 100, patience 15, AMP enabled.
+  compute_history: >
+    The first result generation (M0-M9, thesis draft numbers) ran on a
+    CPU-only machine (Intel Iris Xe, no CUDA) with a deliberately reduced
+    budget: d_model {64,128}, n_layers {2}, T {10,20}, horizons
+    {1,2,3,5,8,10}, lr {1e-4,5e-4}, max_epochs 30, patience 5, and the
+    hyperparameter sweep restricted to fold 0. Those settings are recorded
+    here so the CPU-budget results in the thesis remain reproducible and the
+    GPU re-run is clearly identifiable as a separate, larger-budget study.
