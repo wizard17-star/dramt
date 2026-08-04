@@ -98,3 +98,53 @@ def test_dcc_garch_smoke(synth_returns):
     # correlated synthetic series -> forecasts should detect positive correlation
     off = corr[:, 0, 1]
     assert off.mean() > 0.2
+
+
+# --------------------------------------------------------------------------- #
+# TFT baseline (long-panel construction)
+# --------------------------------------------------------------------------- #
+
+def _fake_aligned(n_days=120, portfolio=("AAPL", "MSFT")):
+    from src.models.baselines.tft import MACRO_FEATURES, PER_STOCK_FEATURES
+
+    rng = np.random.default_rng(0)
+    idx = pd.bdate_range("2021-01-01", periods=n_days)
+    data = {}
+    for s in portfolio:
+        for f in PER_STOCK_FEATURES:
+            data[f"{s}_{f}"] = rng.normal(size=n_days)
+    for m in MACRO_FEATURES:
+        data[m] = rng.normal(size=n_days)
+    return pd.DataFrame(data, index=idx)
+
+
+def test_tft_long_frame_preserves_per_stock_values():
+    """Wide -> long reshape must not cross-contaminate stocks: every row's
+    features must come from that row's own ticker."""
+    from src.models.baselines.tft import PER_STOCK_FEATURES, build_long_frame
+
+    portfolio = ["AAPL", "MSFT"]
+    daily = _fake_aligned(portfolio=portfolio)
+    long = build_long_frame(daily, portfolio)
+
+    assert len(long) == len(daily) * len(portfolio)
+    for s in portfolio:
+        sub = long[long["stock"] == s].sort_values("time_idx")
+        for f in PER_STOCK_FEATURES:
+            np.testing.assert_allclose(sub[f].to_numpy(), daily[f"{s}_{f}"].to_numpy())
+
+
+def test_tft_long_frame_macro_shared_and_time_idx_monotonic():
+    from src.models.baselines.tft import MACRO_FEATURES, build_long_frame
+
+    portfolio = ["AAPL", "MSFT"]
+    daily = _fake_aligned(portfolio=portfolio)
+    long = build_long_frame(daily, portfolio)
+
+    # macro is a shared block: identical across stocks at the same time_idx
+    a = long[long["stock"] == "AAPL"].sort_values("time_idx")
+    b = long[long["stock"] == "MSFT"].sort_values("time_idx")
+    for m in MACRO_FEATURES:
+        np.testing.assert_allclose(a[m].to_numpy(), b[m].to_numpy())
+    # time_idx must index the aligned grid contiguously from 0
+    np.testing.assert_array_equal(a["time_idx"].to_numpy(), np.arange(len(daily)))

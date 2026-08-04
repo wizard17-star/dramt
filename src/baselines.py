@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 DEEP_MODELS = ["lstm", "gru", "cnn_bilstm", "cnn_bilstm_attn", "transformer", "sentiment_lstm"]
 ECONOMETRIC_MODELS = ["arima", "garch", "garch_midas", "dcc_garch"]
+# TFT is handled separately: pytorch-forecasting needs a long-format panel
+# rather than the pre-windowed tensors the other deep baselines consume.
+SPECIAL_MODELS = ["tft"]
 
 
 def _save_fold_result(fold_dir: Path, fold: Fold, data: dict, mu: np.ndarray,
@@ -177,10 +180,33 @@ def run_econometric_baseline(name: str, base: dict, data: dict, fold: Fold,
 
 
 # --------------------------------------------------------------------------- #
+# Temporal Fusion Transformer
+# --------------------------------------------------------------------------- #
+
+def run_tft_baseline(base: dict, data: dict, fold: Fold, run_dir: Path,
+                     daily: pd.DataFrame, device: torch.device, T: int) -> dict:
+    from src.models.baselines.tft import tft_forecasts
+
+    t_cfg = base["training"]
+    mu = tft_forecasts(
+        daily=daily,
+        portfolio=base["portfolio"]["members"],
+        anchor_dates=pd.to_datetime(data["anchor_dates"], unit="ns"),
+        train_idx=fold.train_idx, val_idx=fold.val_idx, test_idx=fold.test_idx,
+        horizons=[int(h) for h in data["horizons"]],
+        T=T, device=device,
+        max_epochs=t_cfg["max_epochs"], patience=t_cfg["early_stopping_patience"],
+        lr=float(t_cfg["default_lr"]), dropout=base["model"]["dropout"],
+        batch_size=t_cfg["batch_size"], seed=base["seed"] + fold.k,
+    )
+    return _save_fold_result(run_dir / f"fold{fold.k}", fold, data, mu, None, None)
+
+
+# --------------------------------------------------------------------------- #
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=DEEP_MODELS + ECONOMETRIC_MODELS)
+    parser.add_argument("--model", choices=DEEP_MODELS + ECONOMETRIC_MODELS + SPECIAL_MODELS)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--fold", type=int, default=None)
     parser.add_argument("--suffix", default="_nosent", help="dataset suffix ('' = with sentiment)")
@@ -197,7 +223,7 @@ def main() -> None:
         val_frac_of_fold=base["splits"]["val_frac_of_fold"],
         purge_gap=T + int(max(data["horizons"])),
     )
-    models = DEEP_MODELS + ECONOMETRIC_MODELS if args.all else [args.model]
+    models = DEEP_MODELS + ECONOMETRIC_MODELS + SPECIAL_MODELS if args.all else [args.model]
     assert models[0] is not None, "--model or --all required"
 
     for name in models:
@@ -209,6 +235,8 @@ def main() -> None:
                 continue
             if name in DEEP_MODELS:
                 results.append(train_deep_baseline(name, base, data, fold, run_dir, device))
+            elif name == "tft":
+                results.append(run_tft_baseline(base, data, fold, run_dir, daily, device, T))
             else:
                 results.append(run_econometric_baseline(name, base, data, fold, run_dir, daily))
         (run_dir / "results.json").write_text(json.dumps(results, indent=2))
