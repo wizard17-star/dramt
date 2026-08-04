@@ -80,12 +80,23 @@ def build_grid(base: dict) -> list[dict]:
     ]
 
 
-def load_done(path: Path) -> set[tuple[int, int]]:
-    """Completed (cfg, fold) pairs, so a long sweep can resume after a crash."""
-    if not path.exists():
-        return set()
-    with open(path, newline="", encoding="utf-8") as f:
-        return {(int(r["cfg"]), int(r["fold"])) for r in csv.DictReader(f)}
+def trial_files(sweep_dir: Path) -> list[Path]:
+    """All trial logs: the single-worker file plus any per-shard files."""
+    return sorted(set(list(sweep_dir.glob("trials.csv")) + list(sweep_dir.glob("trials_shard*.csv"))))
+
+
+def read_trials(sweep_dir: Path) -> list[dict]:
+    rows: list[dict] = []
+    for p in trial_files(sweep_dir):
+        with open(p, newline="", encoding="utf-8") as f:
+            rows.extend(csv.DictReader(f))
+    return rows
+
+
+def load_done(sweep_dir: Path) -> set[tuple[int, int]]:
+    """Completed (cfg, fold) pairs across every shard, so a long sweep can
+    resume after a crash and shards never duplicate each other's work."""
+    return {(int(r["cfg"]), int(r["fold"])) for r in read_trials(sweep_dir)}
 
 
 def append_trial(path: Path, row: dict) -> None:
@@ -140,6 +151,11 @@ def main() -> None:
     parser.add_argument("--topk", type=int, default=12)
     parser.add_argument("--limit", type=int, default=None,
                         help="debug: only run the first N configs")
+    parser.add_argument("--shard", type=int, default=None,
+                        help="this worker's index (0-based); requires --nshards")
+    parser.add_argument("--nshards", type=int, default=1)
+    parser.add_argument("--no-aggregate", action="store_true",
+                        help="skip writing results.csv/best.yaml (for shard workers)")
     args = parser.parse_args()
 
     base = load_config("config.yaml")
@@ -151,8 +167,9 @@ def main() -> None:
 
     sweep_dir = Path(base["paths"]["runs_dir"]) / "sweep"
     sweep_dir.mkdir(parents=True, exist_ok=True)
-    trials_path = sweep_dir / "trials.csv"
-    done = load_done(trials_path)
+    trials_path = (sweep_dir / f"trials_shard{args.shard}.csv" if args.shard is not None
+                   else sweep_dir / "trials.csv")
+    done = load_done(sweep_dir)
     cache: dict[int, dict] = {}
 
     if args.stage1_fold_0:
@@ -166,6 +183,13 @@ def main() -> None:
         k = int(args.folds)
         plan = [(s, k) for s in grid]
         logger.info("sweep: %d configs on fold %d (device=%s)", len(grid), k, device)
+
+    if args.shard is not None:
+        # Deterministic disjoint split so parallel workers never duplicate work.
+        # Round-robin over the (config, fold) plan keeps per-shard load balanced
+        # even though later folds train on strictly more data than earlier ones.
+        plan = [p for i, p in enumerate(plan) if i % args.nshards == args.shard]
+        logger.info("shard %d/%d -> %d trials", args.shard, args.nshards, len(plan))
 
     def execute(plan_items) -> None:
         todo = [(s, k) for s, k in plan_items if (s["cfg"], k) not in done]
@@ -189,8 +213,8 @@ def main() -> None:
     execute(plan)
 
     if args.stage1_fold_0:
-        with open(trials_path, newline="", encoding="utf-8") as f:
-            fold0 = [r for r in csv.DictReader(f) if int(r["fold"]) == 0]
+        assert args.shard is None, "--stage1-fold-0 does not support sharding"
+        fold0 = [r for r in read_trials(sweep_dir) if int(r["fold"]) == 0]
         fold0.sort(key=lambda r: float(r["score"]))
         promoted = {int(r["cfg"]) for r in fold0[: args.topk]}
         logger.info("stage 2: promoting %d configs to folds 1..%d: %s",
@@ -198,9 +222,12 @@ def main() -> None:
         execute([(s, k) for s in grid if s["cfg"] in promoted
                  for k in range(1, n_folds)])
 
+    if args.no_aggregate:
+        logger.info("shard %s finished; skipping aggregation", args.shard)
+        return
+
     # ---- aggregate: mean validation score across the folds each config ran on
-    with open(trials_path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+    rows = read_trials(sweep_dir)
     by_cfg: dict[int, list[dict]] = defaultdict(list)
     for r in rows:
         by_cfg[int(r["cfg"])].append(r)
