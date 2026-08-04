@@ -85,6 +85,31 @@ def run(args: list[str], label: str = "") -> bool:
     return ok
 
 
+def run_many(jobs: list[tuple[list[str], str]], parallel: int) -> None:
+    """Run independent training jobs, optionally concurrently.
+
+    Safe to parallelise because every job writes to its own runs/<name>
+    directory and reads only immutable inputs (the processed feature npz files
+    and aligned_daily.parquet). The one piece of shared mutable state is the
+    GARCH/HAR volatility cache under data/processed/, which is published
+    atomically via os.replace (see src/data/garch_vol.py), so a concurrent
+    rebuild is at worst duplicated work, never a torn read.
+
+    parallel=1 reproduces the original serial behaviour exactly.
+    """
+    if parallel <= 1:
+        for args, label in jobs:
+            run(args, label)
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+    print(f"[chain] running {len(jobs)} jobs with {parallel} workers", flush=True)
+    # Threads, not processes: each job is an independent subprocess, so the
+    # GIL is irrelevant and this only needs to supervise them.
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        list(pool.map(lambda j: run(*j), jobs))
+
+
 def done(run_name: str, n_folds: int = 4) -> bool:
     """True only if the run is complete AND was produced under the CURRENT
     horizon set.
@@ -173,6 +198,10 @@ def main() -> None:
                          "4 ablations, 5 seeds, 6 evaluate, 7 tables, 8 verify")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--n-folds", type=int, default=4)
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="concurrent training jobs (1 = original serial path). "
+                         "The GPU is launch-bound at this model size, so a "
+                         "single job leaves it ~20%% utilised.")
     args = ap.parse_args()
 
     def want(step: int) -> bool:
@@ -185,64 +214,77 @@ def main() -> None:
     best.pop("name", None)
     print(f"[chain] best swept config: {best}", flush=True)
 
+    def skip(name: str) -> bool:
+        if not args.force and done(name, args.n_folds):
+            print(f"[chain] SKIP {name} (already complete)", flush=True)
+            return True
+        return False
+
+    jobs: list[tuple[list[str], str]] = []
+
     # ---- 1. baselines ----------------------------------------------------
     if want(1):
         for model in ["martingale", "har_rv", "arima", "garch", "garch_midas",
                       "dcc_garch", "lstm", "gru", "cnn_bilstm", "cnn_bilstm_attn",
                       "transformer", "sentiment_lstm", "tft"]:
-            if not args.force and done(f"baseline_{model}", args.n_folds):
-                print(f"[chain] SKIP baseline_{model} (already complete)", flush=True)
+            if skip(f"baseline_{model}"):
                 continue
             # T must match the swept DRAM-T config, otherwise the anchor sets
             # differ and every paired significance test against this baseline
             # is silently dropped by src/stats_tests.
-            run(["src.baselines", "--model", model, "--suffix", "",
-                 "--T", str(best["T"])], f"baseline {model} (T={best['T']})")
+            jobs.append((["src.baselines", "--model", model, "--suffix", "",
+                          "--T", str(best["T"])],
+                         f"baseline {model} (T={best['T']})"))
 
     # ---- 2. risk variants ------------------------------------------------
     if want(2):
         for name, dist, vol_mode in RISK_VARIANTS:
-            if not args.force and done(name, args.n_folds):
-                print(f"[chain] SKIP {name} (already complete)", flush=True)
+            if skip(name):
                 continue
             p = write_exp(name, best, dist=dist, vol_mode=vol_mode)
-            run(["src.train", "--config", str(p)], f"risk variant {name}")
+            jobs.append((["src.train", "--config", str(p)], f"risk variant {name}"))
 
     # ---- 3. RQ3 variants -------------------------------------------------
     if want(3):
         for name, signals, per_step in RQ3_VARIANTS:
-            if not args.force and done(name, args.n_folds):
-                print(f"[chain] SKIP {name} (already complete)", flush=True)
+            if skip(name):
                 continue
             p = write_exp(name, best, regime_signals=signals,
                           gate_per_timestep=per_step)
-            run(["src.train", "--config", str(p)], f"RQ3 variant {name}")
+            jobs.append((["src.train", "--config", str(p)], f"RQ3 variant {name}"))
 
     # ---- 3b. objective variants (loss rebalancing / ranking) --------------
     if want(9):
         for name, lam1, point_loss, rank_w in OBJECTIVE_VARIANTS:
-            if not args.force and done(name, args.n_folds):
-                print(f"[chain] SKIP {name} (already complete)", flush=True)
+            if skip(name):
                 continue
             p = write_exp(name, best, lambda1=lam1, point_loss=point_loss,
                           rank_weight=rank_w, dist="student_t")
-            run(["src.train", "--config", str(p)], f"objective variant {name}")
+            jobs.append((["src.train", "--config", str(p)],
+                         f"objective variant {name}"))
+
+    # ---- 5a. seed runs (ensemble members) --------------------------------
+    members = [f"dramt_seed{s}" for s in ENSEMBLE_SEEDS]
+    if want(5):
+        for seed in ENSEMBLE_SEEDS:
+            name = f"dramt_seed{seed}"
+            if skip(name):
+                continue
+            p = write_exp(name, best, seed=seed)
+            jobs.append((["src.train", "--config", str(p)], f"seed {seed}"))
+
+    # All of the above are independent runs writing to distinct directories,
+    # so they can be dispatched together.
+    if jobs:
+        run_many(jobs, args.parallel)
 
     # ---- 4. ablations ----------------------------------------------------
+    # Kept serial: src.ablation loops over its 6 configs inside one process.
     if want(4):
         run(["src.ablation", "--suffix", ""], "ablations")
 
-    # ---- 5. seed ensemble ------------------------------------------------
+    # ---- 5b. build the ensemble (needs every member finished) -------------
     if want(5):
-        members = []
-        for seed in ENSEMBLE_SEEDS:
-            name = f"dramt_seed{seed}"
-            members.append(name)
-            if not args.force and done(name, args.n_folds):
-                print(f"[chain] SKIP {name} (already complete)", flush=True)
-                continue
-            p = write_exp(name, best, seed=seed)
-            run(["src.train", "--config", str(p)], f"seed {seed}")
         run(["src.ensemble", "--runs", *members, "--out", "dramt_ensemble"],
             "seed ensemble")
 

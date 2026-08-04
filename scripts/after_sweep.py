@@ -11,6 +11,7 @@ config from a partial grid and silently producing results on top of it.
 from __future__ import annotations
 
 import itertools
+import os
 import subprocess
 import sys
 import time
@@ -99,8 +100,14 @@ def main() -> None:
     if agg.returncode != 0 or not (RUNS / "best.yaml").exists():
         sys.exit("[after_sweep] aggregation failed; chain not started")
 
-    print("[after_sweep] starting gpu_chain", flush=True)
-    chain = subprocess.run([sys.executable, "-m", "scripts.gpu_chain"], text=True)
+    # 4 concurrent training jobs: a single job leaves this GPU ~20% utilised
+    # (launch-bound at this model size). Verified safe -- every job writes to
+    # its own runs/<name> directory, and the shared GARCH/HAR vol cache is
+    # published atomically, tested with 3 runs racing on the same cache files.
+    parallel = os.environ.get("DRAMT_CHAIN_PARALLEL", "4")
+    print(f"[after_sweep] starting gpu_chain (parallel={parallel})", flush=True)
+    chain = subprocess.run(
+        [sys.executable, "-m", "scripts.gpu_chain", "--parallel", parallel], text=True)
     sys.exit(chain.returncode)
 
 

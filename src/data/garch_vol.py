@@ -32,6 +32,7 @@ models and forecasting over every anchor is slow relative to a training epoch.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -138,5 +139,14 @@ def load_or_build(
         )
     if (vol <= 0).any():
         raise ValueError(f"{kind} vol features contain non-positive values")
-    np.savez_compressed(cache, vol=vol)
+
+    # Atomic publish. Several training runs may build the same (kind, T, fold)
+    # cache concurrently when the results chain runs in parallel; writing the
+    # npz in place would let a reader observe a half-written file. Write to a
+    # process-unique temp name and os.replace() it, which is atomic on both
+    # POSIX and Windows. Duplicate work is harmless -- the last writer wins and
+    # all writers produce identical content.
+    tmp = cache.with_suffix(f".tmp{os.getpid()}.npz")
+    np.savez_compressed(tmp, vol=vol)
+    os.replace(tmp, cache)
     return vol
