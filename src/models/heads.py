@@ -21,13 +21,42 @@ class MeanHead(nn.Module):
 
 
 class VolHead(nn.Module):
-    def __init__(self, d_model: int, n_stocks: int, eps: float = 1e-6) -> None:
+    """sigma_hat (B,S,H), strictly positive.
+
+    mode="learned"       sigma = softplus(Wh)                (original)
+    mode="garch_hybrid"  sigma = softplus(Wh + b0) * sigma_garch
+
+    In hybrid mode the recursive GARCH(1,1) filter supplies the volatility
+    LEVEL and the network only learns a multiplicative correction. The bias is
+    initialised so softplus(b0) == 1, i.e. the head starts as the identity on
+    the GARCH forecast and has to earn any deviation from it. This directly
+    targets the diagnosed failure: a windowed transformer has no recursion and
+    so cannot track a volatility regime shift inside a fold, while a GARCH
+    filter updates from every new observation.
+    """
+
+    # softplus(0.5413) == 1.0
+    _UNIT_SOFTPLUS_BIAS = 0.5413248546129181
+
+    def __init__(self, d_model: int, n_stocks: int, eps: float = 1e-6,
+                 mode: str = "learned") -> None:
         super().__init__()
+        if mode not in ("learned", "garch_hybrid"):
+            raise ValueError(f"unknown vol mode {mode!r}")
+        self.mode = mode
         self.proj = nn.Linear(d_model, n_stocks)
         self.eps = eps
+        if mode == "garch_hybrid":
+            nn.init.zeros_(self.proj.weight)
+            nn.init.constant_(self.proj.bias, self._UNIT_SOFTPLUS_BIAS)
 
-    def forward(self, horizon_repr: torch.Tensor) -> torch.Tensor:  # (B,H,d) -> (B,S,H)
-        raw = self.proj(horizon_repr).transpose(1, 2)
+    def forward(self, horizon_repr: torch.Tensor,
+                garch_vol: torch.Tensor | None = None) -> torch.Tensor:
+        raw = self.proj(horizon_repr).transpose(1, 2)          # (B,S,H)
+        if self.mode == "garch_hybrid":
+            if garch_vol is None:
+                raise ValueError("vol_mode='garch_hybrid' requires garch_vol")
+            return nn.functional.softplus(raw) * garch_vol.clamp_min(self.eps) + self.eps
         return nn.functional.softplus(raw) + self.eps
 
 

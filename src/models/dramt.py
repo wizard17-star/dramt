@@ -89,6 +89,7 @@ class DRAMT(nn.Module):
         dynamic_weighting: bool = True,
         risk_head: bool = True,
         dist: str = "gaussian",
+        vol_mode: str = "learned",
     ) -> None:
         super().__init__()
         self.use_sentiment = use_sentiment
@@ -131,7 +132,7 @@ class DRAMT(nn.Module):
         self.decoder = DecoderLayer(d_model, n_heads, ffn_mult, dropout)
 
         self.mean_head = MeanHead(d_model, n_stocks)
-        self.vol_head = VolHead(d_model, n_stocks)
+        self.vol_head = VolHead(d_model, n_stocks, mode=vol_mode)
         self.corr_head = CorrHead(d_model, n_stocks)
         self.final_norm = nn.LayerNorm(d_model)
 
@@ -141,6 +142,7 @@ class DRAMT(nn.Module):
         x_macro: torch.Tensor,        # (B,T,F_macro)
         x_sent: torch.Tensor,         # (B,T,F_sent)
         regime: torch.Tensor,         # (B,n_regime)
+        garch_vol: torch.Tensor | None = None,   # (B,S,H), vol_mode='garch_hybrid'
     ) -> dict[str, torch.Tensor]:
         tokens = [self.enc_num(x_num)]
         if self.use_macro:
@@ -177,7 +179,7 @@ class DRAMT(nn.Module):
 
         # item 8: heads
         mu = self.mean_head(horizon_repr)                         # (B,S,H)
-        sigma = self.vol_head(horizon_repr)                       # (B,S,H)
+        sigma = self.vol_head(horizon_repr, garch_vol)            # (B,S,H)
         pooled = horizon_repr.mean(dim=1)                         # (B,d)
         R, L = self.corr_head(pooled)                             # (B,S,S)
 

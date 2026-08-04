@@ -169,6 +169,55 @@ def test_gaussian_nll_constant_matches_scipy():
     np.testing.assert_allclose(got, want, rtol=1e-6)
 
 
+def test_garch_hybrid_starts_as_identity_on_garch_vol():
+    """At initialisation the hybrid head must reproduce the GARCH forecast
+    exactly (multiplier == 1), so any later deviation is something the network
+    actually learned rather than an arbitrary starting point."""
+    model = _make_model(vol_mode="garch_hybrid")
+    x = _make_inputs()
+    gv = torch.rand(B, S, H) * 2.0 + 0.5
+    out = model(*x, gv)
+    torch.testing.assert_close(out["sigma"], gv, rtol=1e-4, atol=1e-5)
+
+
+def test_garch_hybrid_scales_with_garch_vol():
+    """Doubling the GARCH input must double sigma - the level comes from the
+    filter, not from the network."""
+    model = _make_model(vol_mode="garch_hybrid")
+    x = _make_inputs()
+    gv = torch.rand(B, S, H) + 0.5
+    s1 = model(*x, gv)["sigma"]
+    s2 = model(*x, gv * 2.0)["sigma"]
+    torch.testing.assert_close(s2, s1 * 2.0, rtol=1e-3, atol=1e-5)
+
+
+def test_garch_hybrid_requires_garch_input():
+    model = _make_model(vol_mode="garch_hybrid")
+    with pytest.raises(ValueError, match="garch_vol"):
+        model(*_make_inputs())
+
+
+def test_learned_vol_mode_ignores_garch_input():
+    """Default mode must be unaffected by the extra tensor, so the batch
+    layout change cannot silently alter non-hybrid runs."""
+    model = _make_model(vol_mode="learned")
+    model.eval()   # otherwise dropout, not the garch input, drives the difference
+    x = _make_inputs()
+    with torch.no_grad():
+        a = model(*x, torch.rand(B, S, H))["sigma"]
+        b = model(*x, None)["sigma"]
+    torch.testing.assert_close(a, b)
+
+
+def test_garch_hybrid_multiplier_is_trainable():
+    model = _make_model(vol_mode="garch_hybrid")
+    gv = torch.rand(B, S, H) + 0.5
+    out = model(*_make_inputs(), gv)
+    out["sigma"].sum().backward()
+    assert model.vol_head.proj.weight.grad is not None
+    assert model.vol_head.proj.weight.grad.abs().sum() > 0
+
+
 def test_gradients_flow_to_all_modalities():
     model = _make_model()
     x = _make_inputs()

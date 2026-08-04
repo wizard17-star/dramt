@@ -125,8 +125,16 @@ def regime_features(X_num: np.ndarray, X_macro: np.ndarray, X_sent: np.ndarray,
     return reg.astype(np.float32)
 
 
-def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float):
-    """Standardize on train only; scale targets; build regime features."""
+def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float,
+                 garch_vol: np.ndarray | None = None):
+    """Standardize on train only; scale targets; build regime features.
+
+    `garch_vol` (n_anchors, S, H) is the fold's GARCH(1,1) cumulative volatility
+    forecast in RAW units; it is scaled to percent units alongside the targets
+    so the hybrid vol head multiplies quantities in a single unit system. When
+    absent, a zeros tensor of the right shape is emitted so the batch layout is
+    identical in every mode (only garch_hybrid ever reads it).
+    """
     num_cols = [str(c) for c in data["num_cols"]]
     macro_cols = [str(c) for c in data["macro_cols"]]
     sent_cols = [str(c) for c in data["sent_cols"]]
@@ -138,9 +146,12 @@ def prepare_fold(data: dict[str, np.ndarray], fold: Fold, target_scale: float):
         Xm = scalers["X_macro"].transform(data["X_macro"][idx])
         Xs = scalers["X_sent"].transform(data["X_sent"][idx])
         reg = regime_features(Xn, Xm, Xs, num_cols, macro_cols, sent_cols)
+        gv = (garch_vol[idx] * target_scale if garch_vol is not None
+              else np.zeros_like(data["y_ret"][idx]))
         parts[split] = TensorDataset(
             torch.from_numpy(Xn), torch.from_numpy(Xm), torch.from_numpy(Xs),
             torch.from_numpy(reg),
+            torch.from_numpy(np.ascontiguousarray(gv, dtype=np.float32)),
             torch.from_numpy(data["y_ret"][idx] * target_scale),
             torch.from_numpy(data["y_corr"][idx]),
         )
@@ -162,11 +173,11 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None, grad_clip=1.0, amp
     totals = {"loss": 0.0, "l_point": 0.0, "l_vol": 0.0, "l_corr": 0.0}
     n = 0
     with torch.set_grad_enabled(training):
-        for xn, xm, xs, reg, y_ret, y_corr in loader:
+        for xn, xm, xs, reg, gv, y_ret, y_corr in loader:
             xn, xm, xs, reg = xn.to(device), xm.to(device), xs.to(device), reg.to(device)
-            y_ret, y_corr = y_ret.to(device), y_corr.to(device)
+            gv, y_ret, y_corr = gv.to(device), y_ret.to(device), y_corr.to(device)
             with amp_context(device, amp):
-                out = model(xn, xm, xs, reg)
+                out = model(xn, xm, xs, reg, gv)
             out = {k: v.float() for k, v in out.items()}   # loss always in fp32
             losses = loss_fn(out, y_ret, y_corr)
             if training:
@@ -187,9 +198,10 @@ def predict(model, loader, device, target_scale: float, amp: bool = False):
     model.eval()
     mus, sigmas, corrs, weights = [], [], [], []
     df = np.array([])
-    for xn, xm, xs, reg, *_ in loader:
+    for xn, xm, xs, reg, gv, *_ in loader:
         with amp_context(device, amp):
-            out = model(xn.to(device), xm.to(device), xs.to(device), reg.to(device))
+            out = model(xn.to(device), xm.to(device), xs.to(device), reg.to(device),
+                        gv.to(device))
         out = {k: v.float() for k, v in out.items()}
         mus.append(out["mu"].cpu().numpy())
         sigmas.append(out["sigma"].cpu().numpy())
@@ -214,7 +226,20 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
                fold: Fold, run_dir: Path, device: torch.device) -> dict:
     amp = bool(base_cfg["device"].get("amp", False))
     set_seed(ecfg.seed + fold.k)
-    parts, _ = prepare_fold(data, fold, ecfg.target_scale)
+
+    garch_vol = None
+    if ecfg.vol_mode == "garch_hybrid":
+        import pandas as pd
+
+        from src.data.garch_vol import load_or_build
+        processed = Path(base_cfg["paths"]["processed_dir"])
+        daily = pd.read_parquet(processed / "aligned_daily.parquet")
+        garch_vol = load_or_build(
+            processed, daily, base_cfg["portfolio"]["members"],
+            data["anchor_dates"], fold.train_idx,
+            [int(h) for h in data["horizons"]], ecfg.T, fold.k, ecfg.dataset_suffix,
+        )
+    parts, _ = prepare_fold(data, fold, ecfg.target_scale, garch_vol)
     g = torch.Generator().manual_seed(ecfg.seed + fold.k)
     loaders = {
         "train": DataLoader(parts["train"], batch_size=ecfg.batch_size, shuffle=True, generator=g),
@@ -233,7 +258,7 @@ def train_fold(base_cfg: dict, ecfg: ExperimentConfig, data: dict[str, np.ndarra
         ffn_mult=ecfg.ffn_mult, dropout=ecfg.dropout,
         use_sentiment=ecfg.use_sentiment, use_macro=ecfg.use_macro,
         dynamic_weighting=ecfg.dynamic_weighting, risk_head=ecfg.risk_head,
-        dist=ecfg.dist,
+        dist=ecfg.dist, vol_mode=ecfg.vol_mode,
     ).to(device)
     loss_fn = CompositeLoss(ecfg.lambda1, ecfg.lambda2, risk_head=ecfg.risk_head,
                             dist=ecfg.dist)

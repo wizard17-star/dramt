@@ -98,7 +98,7 @@ def train_deep_baseline(name: str, base: dict, data: dict, fold: Fold,
     amp = bool(base["device"].get("amp", False))
 
     def fwd(batch):
-        xn, xm, xs, reg, y_ret, y_corr = [b.to(device) for b in batch]
+        xn, xm, xs, reg, gv, y_ret, y_corr = [b.to(device) for b in batch]
         with amp_context(device, amp):
             pred = model(xn, xs) if name == "sentiment_lstm" else model(xn)
         return loss_fn(pred.float(), y_ret)
