@@ -23,7 +23,7 @@ RES = Path("results")
 
 
 def _load(name: str) -> pd.DataFrame | None:
-    p = RES / name
+    p = Path(RES) / name
     if not p.exists():
         print(f"  [missing] {p}")
         return None
@@ -46,8 +46,12 @@ def section(title: str) -> None:
 
 
 def main() -> None:
+    global RES
     ap = argparse.ArgumentParser()
-    ap.parse_args()
+    ap.add_argument("--results-dir", default="results",
+                    help="read artifacts from here (used to test the digest "
+                         "against a synthetic schema without touching results/)")
+    RES = Path(ap.parse_args().results_dir)
 
     section("INPUTS")
     ev = _load("eval_summary.csv")
@@ -145,10 +149,27 @@ def main() -> None:
     # ------------------------------------------------------------- strata
     section("RQ1 (sentiment) - accuracy split by news availability")
     if strata is not None:
-        piv = strata.pivot(index="run", columns="stratum", values="MAE")
-        keep = [r for r in piv.index if "sentiment" in r or r.endswith("full")
-                or r.startswith("dramt_ensemble")]
-        print(piv.loc[keep].to_string() if keep else piv.head(12).to_string())
+        s = strata.copy()
+        # collapse per-seed ablation runs so the contrast is legible
+        s["config"] = s["run"].str.replace(r"_s\d+$", "", regex=True)
+        piv = s.groupby(["config", "stratum"])["MAE"].mean().unstack()
+        focus = ["ablation_full", "ablation_no_sentiment", "ablation_perm_sentiment",
+                 "ablation_no_macro", "ablation_perm_macro", "dramt_ensemble"]
+        rows = [f for f in focus if f in piv.index]
+        if rows:
+            print(piv.loc[rows].to_string())
+            base = piv.loc["ablation_full"] if "ablation_full" in piv.index else None
+            if base is not None:
+                print("\n  cost of removing sentiment, by stratum "
+                      "(if sentiment carries signal, the NEWS column must be worse):")
+                for cfg in ("ablation_no_sentiment", "ablation_perm_sentiment"):
+                    if cfg in piv.index:
+                        d_news = piv.loc[cfg, "news"] - base["news"]
+                        d_no = piv.loc[cfg, "no_news"] - base["no_news"]
+                        print(f"    {cfg.replace('ablation_',''):18s} "
+                              f"news {d_news:+.5f}   no_news {d_no:+.5f}")
+        else:
+            print(piv.head(12).to_string())
 
     # ---------------------------------------------------------------- RQ3
     section("RQ3 - dynamic weighting variants")
