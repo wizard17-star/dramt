@@ -58,8 +58,9 @@ MODEL_LABELS = {
     "dramt_gate_ext": "DRAM-T (extended gate signals)",
     "dramt_gate_time": "DRAM-T (per-timestep gate)",
     "dramt_gate_ext_time": "DRAM-T (extended + per-timestep gate)",
-    # --- ensemble ---
-    "dramt_ensemble": "DRAM-T (10-seed ensemble)",
+    # --- ensembles ---
+    "dramt_ensemble": "DRAM-T (10-seed ensemble, Gaussian)",
+    "dramt_tg_ensemble": "DRAM-T (10-seed ensemble, Student-$t$ + GARCH-hybrid)",
     # --- ablations ---
     "ablation_full": "Full model",
     "ablation_no_sentiment": "-- sentiment",
@@ -74,7 +75,10 @@ MODEL_LABELS = {
     "dramt_full": "DRAM-T (CPU-era, no sentiment)",
 }
 
-SEED_RE = re.compile(r"^dramt_seed\d+$")
+# Individual ensemble-member runs, of any ensemble family. They are excluded
+# from the headline tables (10-20 near-identical rows would swamp the
+# comparison) and summarised in the seed-robustness table instead.
+SEED_RE = re.compile(r"^dramt_(?:tg_)?seed\d+$")
 OBJECTIVE_RUNS = ["dramt_lam1_2", "dramt_lam1_5", "dramt_riskonly",
                   "dramt_rank", "dramt_rank_only"]
 GATE_RUNS = ["dramt_gate_ext", "dramt_gate_time", "dramt_gate_ext_time"]
@@ -308,32 +312,53 @@ def build_tables() -> None:
                "down-weighted by $\\lambda_1$.", "tab:objective")
 
     # ---- seed robustness -----------------------------------------------
-    seeds = summary[is_seed]
-    if len(seeds):
-        rows = [{
-            "Run": r["run"].replace("dramt_seed", "seed "),
-            "MAE": _fmt(_v(r, "MAE"), None),
-            "RMSE": _fmt(_v(r, "RMSE"), None),
-            "DirAcc": _fmt(_v(r, "DirAcc"), None, 3),
-        } for _, r in seeds.iterrows()]
+    # One block per ensemble family, so a Gaussian member is never averaged
+    # together with a Student-t + GARCH-hybrid one.
+    families = [("dramt_seed", "dramt_ensemble", "Gaussian head"),
+                ("dramt_tg_seed", "dramt_tg_ensemble",
+                 "Student-$t$ + GARCH-hybrid head")]
+    rows = []
+    for prefix, ens_name, label in families:
+        fam = summary[summary["run"].str.match(rf"^{prefix}\d+$")]
+        if not len(fam):
+            continue
+        rows.append({"Run": f"\\textit{{{label}}} ({len(fam)} seeds)",
+                     "MAE": "", "RMSE": "", "DirAcc": "", "VaR breach (\\%)": ""})
         rows.append({
-            "Run": "spread (max - min)",
-            "MAE": _fmt(seeds["MAE"].max() - seeds["MAE"].min(), None),
-            "RMSE": _fmt(seeds["RMSE"].max() - seeds["RMSE"].min(), None),
-            "DirAcc": _fmt(seeds["DirAcc"].max() - seeds["DirAcc"].min(), None, 3),
+            "Run": "  range (min - max)",
+            "MAE": f"{fam['MAE'].min():.5f} - {fam['MAE'].max():.5f}",
+            "RMSE": f"{fam['RMSE'].min():.5f} - {fam['RMSE'].max():.5f}",
+            "DirAcc": f"{fam['DirAcc'].min():.3f} - {fam['DirAcc'].max():.3f}",
+            "VaR breach (\\%)": (f"{100*fam['VaRBreach'].min():.1f} - "
+                                 f"{100*fam['VaRBreach'].max():.1f}"
+                                 if "VaRBreach" in fam and fam["VaRBreach"].notna().any()
+                                 else "--"),
         })
-        ens = summary[summary["run"] == "dramt_ensemble"]
+        rows.append({
+            "Run": "  seed std",
+            "MAE": _fmt(float(fam["MAE"].std(ddof=1)), None, 5),
+            "RMSE": _fmt(float(fam["RMSE"].std(ddof=1)), None, 5),
+            "DirAcc": _fmt(float(fam["DirAcc"].std(ddof=1)), None, 3),
+            "VaR breach (\\%)": "",
+        })
+        ens = summary[summary["run"] == ens_name]
         if len(ens):
             e = ens.iloc[0]
             rows.append({
-                "Run": "\\textbf{ensemble}",
-                "MAE": _fmt(_v(e, "MAE"), None),
-                "RMSE": _fmt(_v(e, "RMSE"), None),
+                "Run": "  \\textbf{ensemble}",
+                "MAE": _fmt(_v(e, "MAE"), None, 5),
+                "RMSE": _fmt(_v(e, "RMSE"), None, 5),
                 "DirAcc": _fmt(_v(e, "DirAcc"), None, 3),
+                "VaR breach (\\%)": (f"{100 * _v(e, 'VaRBreach'):.2f}"
+                                     if not _isnan(_v(e, "VaRBreach")) else "--"),
             })
+    if rows:
         _write(pd.DataFrame(rows), results_dir, "tables_seeds",
-               "Seed robustness of the selected configuration and the "
-               "seed-averaged ensemble.", "tab:seeds")
+               "Seed robustness by ensemble family. The Gaussian family is the "
+               "originally selected configuration; the Student-$t$ + "
+               "GARCH-hybrid family additionally carries the RQ2 calibration "
+               "changes, so its ensemble is the model that embodies every "
+               "contribution at once.", "tab:seeds")
 
 
 if __name__ == "__main__":

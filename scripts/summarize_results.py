@@ -69,7 +69,8 @@ def main() -> None:
     print("Reference point: the martingale (zero-forecast) null.\n")
     cols = ["run", "MAE", "MAE_std", "RMSE", "DirAcc"]
     key = ["baseline_martingale", "baseline_arima", "baseline_har_rv",
-           "baseline_tft", "dramt_gpu", "dramt_t", "dramt_ensemble"]
+           "baseline_tft", "dramt_gpu", "dramt_t", "dramt_t_garch",
+           "dramt_ensemble", "dramt_tg_ensemble"]
     print(ev[ev["run"].isin(key)][cols].to_string(index=False))
     null = _row(ev, "baseline_martingale")
     if null is not None:
@@ -191,15 +192,27 @@ def main() -> None:
                   ].to_string(index=False))
 
     # ---------------------------------------------------------------- seeds
-    section("Seed robustness")
-    sd = ev[ev["run"].str.match(r"^dramt_seed\d+$")]
-    if len(sd):
-        print(f"  n_seeds={len(sd)}  MAE {sd['MAE'].min():.5f}-{sd['MAE'].max():.5f} "
-              f"(spread {sd['MAE'].max()-sd['MAE'].min():.5f}, sd {sd['MAE'].std():.5f})")
-        print(f"  DirAcc {sd['DirAcc'].min():.4f}-{sd['DirAcc'].max():.4f}")
-        ens = _row(ev, "dramt_ensemble")
+    section("Seed robustness, by ensemble family")
+    for prefix, ens_name, label in (
+            ("dramt_seed", "dramt_ensemble", "Gaussian head"),
+            ("dramt_tg_seed", "dramt_tg_ensemble", "Student-t + GARCH-hybrid head")):
+        sd = ev[ev["run"].str.match(rf"^{prefix}\d+$")]
+        if not len(sd):
+            continue
+        print(f"  {label} ({len(sd)} seeds)")
+        print(f"    MAE {sd['MAE'].min():.5f}-{sd['MAE'].max():.5f} "
+              f"(sd {sd['MAE'].std():.5f})   DirAcc "
+              f"{sd['DirAcc'].min():.4f}-{sd['DirAcc'].max():.4f}")
+        if "VaRBreach" in sd.columns and sd["VaRBreach"].notna().any():
+            print(f"    VaR breach {100*sd['VaRBreach'].min():.1f}%-"
+                  f"{100*sd['VaRBreach'].max():.1f}%")
+        ens = _row(ev, ens_name)
         if ens is not None:
-            print(f"  ensemble MAE={_fmt(ens['MAE'], 5)} DirAcc={_fmt(ens['DirAcc'], 4)}")
+            vb = _v(ens, "VaRBreach")
+            print(f"    ENSEMBLE MAE={_fmt(ens['MAE'], 5)} "
+                  f"DirAcc={_fmt(ens['DirAcc'], 4)} "
+                  f"VaRbreach={'n/a' if _isnan(vb) else f'{100*vb:.2f}%'} "
+                  f"ES_Z2={_fmt(_v(ens, 'ES_Z2'), 3)}")
 
     print("\nDone. Every number above was read from results/; nothing inferred.")
 

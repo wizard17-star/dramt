@@ -1,7 +1,7 @@
 # Results Summary — DRAM-T: Dynamic and Risk-Aware Multimodal Transformer
 
 **GPU study, 2026-08-05.** All numbers below come from real runs on an NVIDIA
-RTX 5070 (CUDA 12.8). 77 model runs, 4-fold expanding walk-forward validation
+RTX 5070 (CUDA 12.8). 88 model runs, 4-fold expanding walk-forward validation
 (purge gap = T + h_max samples), 5-stock tech portfolio (AAPL, GOOGL, MSFT,
 AMZN, META), horizons 1–10 trading days, 460 test anchors shared identically
 by every run (verified programmatically). Full tables: `tables_*.csv/.tex`;
@@ -22,14 +22,23 @@ significance: `stats_wilcoxon.csv`; analyses: `analysis_*.csv`.
 
 ## Headline point accuracy (4-fold mean)
 
-| Model | MAE | RMSE | DirAcc |
-|---|---|---|---|
-| ARIMA | **0.03280** | **0.04487** | 0.551 |
-| DRAM-T (10-seed ensemble) | 0.03299 | 0.04521 | 0.549 |
-| DRAM-T (Student-t) | 0.03299 | 0.04528 | 0.547 |
-| **Martingale (zero forecast)** | **0.03308** | 0.04502 | – |
-| DRAM-T (Gaussian) | 0.03353 | 0.04585 | 0.543 |
-| Temporal Fusion Transformer | 0.03576 | 0.04848 | 0.513 |
+| Model | MAE | RMSE | DirAcc | 10-day VaR breach |
+|---|---|---|---|---|
+| ARIMA | **0.03280** | **0.04487** | 0.551 | – |
+| GARCH(1,1) | 0.03287 | 0.04502 | 0.536 | 4.3% |
+| DRAM-T (10-seed ensemble, Gaussian) | 0.03299 | 0.04521 | 0.549 | 10.0% |
+| **DRAM-T (10-seed ensemble, Student-t + GARCH-hybrid)** | 0.03301 | 0.04524 | **0.552** | **4.6%** |
+| **Martingale (zero forecast)** | **0.03308** | 0.04502 | – | 5.0% |
+| DRAM-T (Gaussian, single seed) | 0.03353 | 0.04585 | 0.543 | 9.6% |
+| Temporal Fusion Transformer | 0.03576 | 0.04848 | 0.513 | – |
+
+The last two rows of the DRAM-T family are the study's proposed model. The
+**Student-t + GARCH-hybrid ensemble is the configuration that carries every
+contribution at once**: its point accuracy is indistinguishable from the
+Gaussian ensemble (0.00002 MAE apart, against a 0.00095 seed standard
+deviation) and its directional accuracy is slightly higher, while its 10-day
+VaR breach rate falls from 10.0% to 4.6% and the Expected-Shortfall test goes
+from rejected to accepted. It is the model the thesis should present.
 
 The martingale row is the point of the table. A **constant zero forecast**
 scores 0.03308; the best model in the study beats it by 0.00028, or 0.8%.
@@ -43,17 +52,26 @@ general-purpose forecasting transformer is the **worst** model here.
 
 ### Significance
 
+Reference model = the Student-t + GARCH-hybrid ensemble, against all 87 others:
+
 | Test | Significant at 5% |
 |---|---|
-| Raw Wilcoxon (as in the earlier draft) | **48 / 76** |
-| Diebold–Mariano, Newey–West HAC (lag 9) | 19 / 76 |
-| Diebold–Mariano + Holm | **0 / 76** |
+| Raw Wilcoxon (as in the earlier draft) | **41 / 87** |
+| Diebold–Mariano, Newey–West HAC (lag 9) | 22 / 87 |
+| Diebold–Mariano + Holm | **1 / 87** |
 
 These are overlapping multi-horizon forecasts — an anchor's 10-day return
 shares 9 of its 10 days with the next anchor's — so the loss differentials are
 strongly autocorrelated and Wilcoxon's independence assumption is violated.
-Correcting for that, and for testing one model against 76 others, **no pair of
-models in this study is statistically distinguishable on point accuracy.**
+Correcting for that, and for testing one model against 87 others, **essentially
+no pair of models in this study is statistically distinguishable on point
+accuracy.**
+
+The single surviving comparison is the ensemble against one of its own member
+seeds (`dramt_tg_seed44`, p = 0.0015). That is a demonstration that averaging
+over seeds helps, not an independent finding: the ensemble contains the seed
+it is being compared against. **No baseline and no ablation is separable from
+the proposed model.**
 
 ---
 
@@ -110,8 +128,10 @@ breach rate per fold (nominal 5%):
 
 | Model | fold 0 | fold 1 | fold 2 | fold 3 | mean |
 |---|---|---|---|---|---|
-| DRAM-T, Gaussian (original head) | 0.0% | 12.2% | 18.3% | 7.8% | 9.6% |
-| **DRAM-T, Student-t + GARCH-hybrid vol** | 0.0% | 7.0% | 5.2% | 6.1% | **4.6%** |
+| DRAM-T ensemble, **Gaussian** | 0.9% | 13.0% | 16.5% | 9.6% | 10.0% |
+| DRAM-T, Gaussian (single seed) | 0.0% | 12.2% | 18.3% | 7.8% | 9.6% |
+| **DRAM-T ensemble, Student-t + GARCH-hybrid** | 0.0% | 7.0% | 8.7% | 2.6% | **4.6%** |
+| DRAM-T, Student-t + GARCH-hybrid (single seed) | 0.0% | 7.0% | 5.2% | 6.1% | 4.6% |
 | DRAM-T, Student-t | 0.0% | 7.8% | 5.2% | 0.9% | 3.5% |
 | GARCH(1,1) | 0.0% | 4.3% | 7.8% | 5.2% | 4.3% |
 | HAR-RV | 0.0% | 3.5% | 5.2% | 6.1% | 3.7% |
@@ -127,8 +147,10 @@ Expected Shortfall (Acerbi–Székely Test 2, simulated null):
 
 | Model | Z₂ | p | verdict |
 |---|---|---|---|
-| DRAM-T, Gaussian | −1.02 | 0.000 | **rejected** — tail losses worse than predicted |
-| DRAM-T, Student-t + GARCH | +0.32 | 0.45 | not rejected |
+| DRAM-T ensemble, Gaussian | −1.09 | 0.000 | **rejected** — tail losses worse than predicted |
+| DRAM-T, Gaussian (single seed) | −1.02 | 0.000 | **rejected** |
+| **DRAM-T ensemble, Student-t + GARCH** | **+0.33** | **0.20** | not rejected |
+| DRAM-T, Student-t + GARCH (single seed) | +0.32 | 0.45 | not rejected |
 | DRAM-T, Student-t | +0.44 | 0.30 | not rejected |
 | GARCH(1,1) | +0.14 | 0.06 | not rejected |
 
@@ -199,10 +221,19 @@ return volatility rises monotonically across folds (0.030 → 0.040 → 0.054 �
 sweep, the spread of validation scores between folds (2.43–4.35) was roughly
 ten times any hyperparameter effect.
 
-Seed robustness of the selected configuration (10 seeds): MAE 0.03293–0.03566
-(sd 0.00095), DirAcc 0.494–0.558. The seed-averaged ensemble reaches MAE
-0.03299, near the best individual seed — ensembling recovers most of the
-seed penalty.
+Seed robustness, 10 seeds per family:
+
+| Family | MAE range | seed sd | ensemble MAE | ensemble VaR breach |
+|---|---|---|---|---|
+| Gaussian head | 0.03293–0.03566 | 0.00095 | 0.03299 | 10.0% |
+| Student-t + GARCH-hybrid head | see `tables_seeds.csv` | – | 0.03301 | **4.6%** |
+
+In both families the ensemble lands near the best individual seed, so
+averaging recovers most of the seed penalty. Crucially the two ensembles are
+**indistinguishable on point accuracy** (0.00002 MAE apart, two orders of
+magnitude below the seed standard deviation) while differing by a factor of
+two in VaR breach rate: the risk-calibration changes are free in accuracy
+terms.
 
 ---
 
