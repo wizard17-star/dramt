@@ -146,7 +146,35 @@ predictions by whether the anchor's own input window contained news:
 
 If sentiment carried signal, the news column would have to degrade more. It is
 the reverse, and this reproduces the same pattern found on the CPU-era data.
-Sentiment provides no measurable benefit **even on the days when news exists**.
+Sentiment provides no measurable benefit even on the days flagged as carrying
+news.
+
+#### The limit of this conclusion — the dense-sentiment window is not tested
+
+The claim above must be qualified, and the qualification is structural rather
+than statistical. The project collected GDELT at **daily** resolution inside a
+case-study window (2022-12-01 – 2023-03-31) and at **monthly** resolution
+elsewhere, because of API rate limits. But the walk-forward split places the
+first test anchor at **2023-03-30**:
+
+| | trading days | mean sentiment coverage |
+|---|---|---|
+| case-study window (daily queries) | 83 | **92.5%** |
+| **test period (2023-03-30 – 2026-06-15)** | **460 anchors** | **27.0%** |
+
+Only **2 of 460 test anchors** fall inside the case-study window. The
+densely-sampled sentiment therefore sits almost entirely in the training
+period, and every sentiment result in this study is measured on the
+monthly-resolution portion, where a given stock has news on 8% (GOOGL) to 60%
+(MSFT) of days.
+
+So the defensible statement is **not** "news sentiment does not help stock
+return forecasting". It is: *sentiment sampled at monthly query resolution,
+covering 27% of test days, provides no measurable benefit* — and the
+configuration that would actually test the hypothesis, dense daily sentiment
+over an out-of-sample period, was never evaluated because the dense window
+lies in-sample. That is a data-collection design issue, not a modelling
+result, and it is the single most valuable thing to fix in future work.
 
 ---
 
@@ -411,6 +439,10 @@ at these horizons is not.
 - Rate limiting forced monthly query resolution outside the
   2022-12 – 2023-03 case window, where resolution is daily (coverage
   74.7–98.8% of trading days there, versus 9–71% over the full span).
+- **The dense case-study window lies inside the training period of every
+  fold** — only 2 of 460 test anchors fall in it — so all sentiment results
+  are measured at monthly resolution with 27% mean test coverage. Future
+  work should place the daily-resolution pull inside the evaluation period.
 - MAPE on returns is unstable near zero and is reported but not relied upon.
 
 ## Reproduce
