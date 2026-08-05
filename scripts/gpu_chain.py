@@ -144,10 +144,15 @@ def done(run_name: str, n_folds: int = 4) -> bool:
     return True
 
 
-def write_exp(name: str, best: dict, **overrides) -> Path:
+def write_exp(name: str, best: dict, dry_run: bool = False, **overrides) -> Path:
+    path = EXP / f"{name}.yaml"
+    if dry_run:
+        # A dry run must not touch the filesystem. It would otherwise leave
+        # experiment files built from whatever best.yaml currently says -
+        # before the sweep aggregates, that is the STALE previous-study config.
+        return path
     EXP.mkdir(exist_ok=True)
     cfg = {**best, "name": name, "dataset_suffix": "", **overrides}
-    path = EXP / f"{name}.yaml"
     path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return path
 
@@ -240,6 +245,9 @@ def main() -> None:
                          "4 ablations, 5 seeds, 6 evaluate, 7 tables, 8 verify")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--n-folds", type=int, default=4)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print the job list and the runs it would produce, "
+                         "then exit without training anything")
     ap.add_argument("--parallel", type=int, default=1,
                     help="concurrent training jobs (1 = original serial path). "
                          "The GPU is launch-bound at this model size, so a "
@@ -283,7 +291,7 @@ def main() -> None:
         for name, dist, vol_mode in RISK_VARIANTS:
             if skip(name):
                 continue
-            p = write_exp(name, best, dist=dist, vol_mode=vol_mode)
+            p = write_exp(name, best, args.dry_run, dist=dist, vol_mode=vol_mode)
             jobs.append((["src.train", "--config", str(p)], f"risk variant {name}"))
 
     # ---- 3. RQ3 variants -------------------------------------------------
@@ -291,7 +299,7 @@ def main() -> None:
         for name, signals, per_step in RQ3_VARIANTS:
             if skip(name):
                 continue
-            p = write_exp(name, best, regime_signals=signals,
+            p = write_exp(name, best, args.dry_run, regime_signals=signals,
                           gate_per_timestep=per_step)
             jobs.append((["src.train", "--config", str(p)], f"RQ3 variant {name}"))
 
@@ -300,7 +308,7 @@ def main() -> None:
         for name, lam1, point_loss, rank_w in OBJECTIVE_VARIANTS:
             if skip(name):
                 continue
-            p = write_exp(name, best, lambda1=lam1, point_loss=point_loss,
+            p = write_exp(name, best, args.dry_run, lambda1=lam1, point_loss=point_loss,
                           rank_weight=rank_w, dist="student_t")
             jobs.append((["src.train", "--config", str(p)],
                          f"objective variant {name}"))
@@ -312,7 +320,7 @@ def main() -> None:
             name = f"dramt_seed{seed}"
             if skip(name):
                 continue
-            p = write_exp(name, best, seed=seed)
+            p = write_exp(name, best, args.dry_run, seed=seed)
             jobs.append((["src.train", "--config", str(p)], f"seed {seed}"))
 
     # ---- 4. ablations, one job per (config, seed) ------------------------
@@ -332,6 +340,18 @@ def main() -> None:
 
     # All of the above are independent runs writing to distinct directories,
     # so they can be dispatched together.
+    if args.dry_run:
+        print(f"\n[chain] DRY RUN: {len(jobs)} job(s) would be dispatched "
+              f"with --parallel {args.parallel}\n", flush=True)
+        for i, (cmd, label) in enumerate(jobs, 1):
+            print(f"  {i:3d}. {label:42s} | python -m {' '.join(cmd)}", flush=True)
+        expected = expected_run_names()
+        have = {d.name for d in RUNS.iterdir() if d.is_dir()}
+        print(f"\n[chain] expected runs: {len(expected)}; "
+              f"already on disk: {len(set(expected) & have)}", flush=True)
+        print("[chain] dry run complete - nothing was trained", flush=True)
+        return
+
     if jobs:
         run_many(jobs, args.parallel)
 
