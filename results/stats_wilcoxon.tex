@@ -1,0 +1,86 @@
+\begin{table}
+\caption{Forecast-accuracy comparisons against dramt_ensemble. Wilcoxon assumes independent pairs; because these are overlapping multi-horizon forecasts, the Diebold-Mariano statistic with a Newey-West HAC variance (lag 9) is the appropriate test, and \texttt{dm\_p\_holm} additionally corrects for the number of comparisons. A negative statistic favours the reference model.}
+\label{tab:wilcoxon}
+\begin{tabular}{lrrrrr}
+\toprule
+model_B & mean_diff_A_minus_B & wilcoxon_p & dm_stat & dm_p & dm_p_holm \\
+\midrule
+ablation_full_s42 & -0.000948 & 1.251e-05 & -2.183 & 0.02953 & 1 \\
+ablation_full_s43 & -7.363e-05 & 0.451 & -0.1303 & 0.8964 & 1 \\
+ablation_full_s44 & -0.0001691 & 0.01096 & -0.5606 & 0.5754 & 1 \\
+ablation_full_s45 & -0.001871 & 1.241e-08 & -2.641 & 0.008542 & 0.6065 \\
+ablation_full_s46 & -0.001282 & 1.139e-06 & -1.996 & 0.04648 & 1 \\
+ablation_no_macro_s42 & -0.0006972 & 3.783e-09 & -1.549 & 0.1221 & 1 \\
+ablation_no_macro_s43 & -0.0003917 & 0.04597 & -1.04 & 0.299 & 1 \\
+ablation_no_macro_s44 & -0.000608 & 0.03514 & -1.773 & 0.07688 & 1 \\
+ablation_no_macro_s45 & -0.0009534 & 0.04811 & -1.216 & 0.2245 & 1 \\
+ablation_no_macro_s46 & -0.0007729 & 6.74e-06 & -1.872 & 0.06179 & 1 \\
+ablation_no_sentiment_s42 & -0.0004646 & 0.19 & -0.887 & 0.3755 & 1 \\
+ablation_no_sentiment_s43 & -0.0001057 & 0.002039 & -0.3603 & 0.7188 & 1 \\
+ablation_no_sentiment_s44 & -0.0008634 & 0.001562 & -1.691 & 0.09161 & 1 \\
+ablation_no_sentiment_s45 & -0.002333 & 8.76e-13 & -2.983 & 0.003009 & 0.2257 \\
+ablation_no_sentiment_s46 & -0.0005238 & 2.975e-05 & -1.144 & 0.2532 & 1 \\
+ablation_numerical_only_s42 & 0.0001135 & 0.7562 & 0.4173 & 0.6766 & 1 \\
+ablation_numerical_only_s43 & -0.003791 & 8.864e-06 & -2.539 & 0.01143 & 0.7883 \\
+ablation_numerical_only_s44 & -0.0008128 & 0.002669 & -1.864 & 0.06298 & 1 \\
+ablation_numerical_only_s45 & -0.0002442 & 0.07032 & -0.3817 & 0.7029 & 1 \\
+ablation_numerical_only_s46 & -0.0002142 & 0.2957 & -0.4153 & 0.6781 & 1 \\
+ablation_perm_macro_s42 & 0.0001001 & 0.5778 & 0.4828 & 0.6294 & 1 \\
+ablation_perm_macro_s43 & -0.004639 & 9.646e-06 & -2.905 & 0.003845 & 0.2845 \\
+ablation_perm_macro_s44 & 3.945e-05 & 0.7099 & 0.1173 & 0.9067 & 1 \\
+ablation_perm_macro_s45 & -0.0009119 & 0.001754 & -1.451 & 0.1475 & 1 \\
+ablation_perm_macro_s46 & -2.492e-05 & 0.9071 & -0.07841 & 0.9375 & 1 \\
+ablation_perm_sentiment_s42 & -0.001429 & 1.616e-13 & -2.54 & 0.01142 & 0.7883 \\
+ablation_perm_sentiment_s43 & -0.0007543 & 1.659e-05 & -1.783 & 0.07525 & 1 \\
+ablation_perm_sentiment_s44 & -0.0005093 & 3.87e-07 & -1.935 & 0.05358 & 1 \\
+ablation_perm_sentiment_s45 & -0.001061 & 4.683e-06 & -1.92 & 0.05551 & 1 \\
+ablation_perm_sentiment_s46 & -0.001612 & 1.529e-06 & -2.282 & 0.02298 & 1 \\
+ablation_point_only_s42 & -0.001577 & 1.223e-06 & -2.173 & 0.03026 & 1 \\
+ablation_point_only_s43 & -0.001506 & 0.05874 & -2.045 & 0.04143 & 1 \\
+ablation_point_only_s44 & -0.0006665 & 0.1356 & -1.347 & 0.1788 & 1 \\
+ablation_point_only_s45 & -0.0006393 & 0.00168 & -1.496 & 0.1354 & 1 \\
+ablation_point_only_s46 & -0.0004061 & 0.001093 & -1 & 0.3176 & 1 \\
+ablation_static_fusion_s42 & -9.735e-05 & 0.2627 & -0.2838 & 0.7767 & 1 \\
+ablation_static_fusion_s43 & -0.0005167 & 0.0003434 & -1.245 & 0.2137 & 1 \\
+ablation_static_fusion_s44 & 7.23e-05 & 0.4274 & 0.2077 & 0.8356 & 1 \\
+ablation_static_fusion_s45 & -0.001469 & 1.883e-07 & -2.77 & 0.005826 & 0.4194 \\
+ablation_static_fusion_s46 & -0.001068 & 9.937e-05 & -1.748 & 0.08105 & 1 \\
+baseline_arima & 0.0001881 & 0.8974 & 0.6394 & 0.5229 & 1 \\
+baseline_cnn_bilstm & -0.001757 & 1.907e-11 & -2.382 & 0.01764 & 1 \\
+baseline_cnn_bilstm_attn & -0.0001844 & 0.104 & -0.5994 & 0.5492 & 1 \\
+baseline_dcc_garch & 0.0001171 & 0.9363 & 0.4076 & 0.6837 & 1 \\
+baseline_garch & 0.0001171 & 0.9363 & 0.4076 & 0.6837 & 1 \\
+baseline_garch_midas & 0.0001737 & 0.5171 & 0.5604 & 0.5755 & 1 \\
+baseline_gru & -0.0008573 & 0.0006906 & -1.576 & 0.1158 & 1 \\
+baseline_har_rv & -8.953e-05 & 0.2547 & -0.1698 & 0.8653 & 1 \\
+baseline_lstm & -0.001451 & 1.017e-11 & -2.011 & 0.04492 & 1 \\
+baseline_martingale & -8.953e-05 & 0.2547 & -0.1698 & 0.8653 & 1 \\
+baseline_sentiment_lstm & -0.0003068 & 0.002997 & -0.6317 & 0.5279 & 1 \\
+baseline_tft & -0.002776 & 3.544e-14 & -2.587 & 0.009985 & 0.6989 \\
+baseline_transformer & -0.0006303 & 2.399e-05 & -1.569 & 0.1173 & 1 \\
+dramt_garch & -0.0003186 & 0.706 & -0.8557 & 0.3926 & 1 \\
+dramt_gate_ext & -0.0007655 & 1.921e-11 & -1.721 & 0.08597 & 1 \\
+dramt_gate_ext_time & -0.0001052 & 0.009909 & -0.3657 & 0.7148 & 1 \\
+dramt_gate_time & 0.000151 & 0.8271 & 0.6363 & 0.5249 & 1 \\
+dramt_gpu & -0.0005388 & 0.02208 & -1.561 & 0.1192 & 1 \\
+dramt_lam1_2 & -0.001195 & 1.02e-09 & -2.364 & 0.01852 & 1 \\
+dramt_lam1_5 & -0.0003147 & 0.09937 & -1.048 & 0.295 & 1 \\
+dramt_rank & 8.762e-06 & 0.6789 & 0.03061 & 0.9756 & 1 \\
+dramt_rank_only & -0.0004398 & 0.004605 & -0.7914 & 0.4291 & 1 \\
+dramt_riskonly & -0.0004237 & 0.006516 & -0.7047 & 0.4814 & 1 \\
+dramt_seed42 & -0.0009797 & 0.2405 & -1.565 & 0.1183 & 1 \\
+dramt_seed43 & 5.834e-05 & 0.8993 & 0.1915 & 0.8482 & 1 \\
+dramt_seed44 & -0.0001288 & 0.05023 & -0.423 & 0.6725 & 1 \\
+dramt_seed45 & -0.002044 & 1.154e-11 & -3.01 & 0.002758 & 0.2096 \\
+dramt_seed46 & -0.001498 & 1.701e-08 & -2.282 & 0.02295 & 1 \\
+dramt_seed47 & -6.687e-05 & 0.01589 & -0.2556 & 0.7984 & 1 \\
+dramt_seed48 & -0.002669 & 1.004e-06 & -2.828 & 0.004883 & 0.3564 \\
+dramt_seed49 & -0.000843 & 0.005271 & -1.874 & 0.06162 & 1 \\
+dramt_seed50 & -5.574e-06 & 0.5135 & -0.01507 & 0.988 & 1 \\
+dramt_seed51 & -0.0003096 & 0.02213 & -1.004 & 0.316 & 1 \\
+dramt_t & -3.142e-06 & 0.01516 & -0.01063 & 0.9915 & 1 \\
+dramt_t_garch & -0.0003386 & 0.3319 & -0.7923 & 0.4286 & 1 \\
+dramt_t_har & -0.002455 & 3.834e-08 & -2.284 & 0.02283 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}

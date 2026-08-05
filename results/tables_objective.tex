@@ -1,0 +1,15 @@
+\begin{table}
+\caption{Loss-balance and ranking-objective variants. Motivation: a constant-zero forecast is competitive on point error, so the mean term carries little signal while the volatility term is down-weighted by $\lambda_1$.}
+\label{tab:objective}
+\begin{tabular}{lccccc}
+\toprule
+Objective & MAE & DirAcc & Vol RMSE & CRPS & VaR breach (\%) \\
+\midrule
+DRAM-T ($\lambda_1=2$) & 0.0342 $\pm$ 0.0052 & 0.508 $\pm$ 0.068 & 0.0210 $\pm$ 0.0088 & 0.0259 $\pm$ 0.0046 & 3.70 \\
+DRAM-T ($\lambda_1=5$) & 0.0333 $\pm$ 0.0053 & 0.519 $\pm$ 0.076 & 0.0178 $\pm$ 0.0046 & 0.0247 $\pm$ 0.0040 & 3.26 \\
+DRAM-T (+ ranking loss) & 0.0330 $\pm$ 0.0049 & 0.549 $\pm$ 0.040 & 0.0168 $\pm$ 0.0031 & 0.0245 $\pm$ 0.0037 & 3.91 \\
+DRAM-T (ranking replaces mean) & 0.0334 $\pm$ 0.0045 & 0.480 $\pm$ 0.023 & 0.0169 $\pm$ 0.0028 & 0.0246 $\pm$ 0.0032 & 1.09 \\
+DRAM-T (risk-only loss) & 0.0334 $\pm$ 0.0046 & 0.513 $\pm$ 0.031 & 0.0172 $\pm$ 0.0054 & 0.0246 $\pm$ 0.0036 & 1.30 \\
+\bottomrule
+\end{tabular}
+\end{table}

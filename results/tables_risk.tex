@@ -1,0 +1,29 @@
+\begin{table}
+\caption{Risk-forecast metrics at the 10-day horizon: VaR backtest calibration, volatility accuracy, interval coverage, CRPS, and the Acerbi-Szekely Expected Shortfall test (nominal breach rate 5\%).}
+\label{tab:risk}
+\begin{tabular}{lccccccccc}
+\toprule
+Model & VaR breach (\%) & Vol RMSE & Coverage 95\% & CRPS & Kupiec $p_{\min}$ & Christof. $p_{\min}$ & ES $Z_2$ & ES $p_{\min}$ & $\nu$ (h=10) \\
+\midrule
+DCC-GARCH & 5.43 & 0.0119 $\pm$ 0.0017 & 0.942 $\pm$ 0.022 & 0.0241 $\pm$ 0.0034 & 0.0006 & 0.0000 & -0.083 & 0.0116 & NaN \\
+GARCH(1,1) & 4.35 & 0.0119 $\pm$ 0.0017 & 0.942 $\pm$ 0.022 & 0.0241 $\pm$ 0.0034 & 0.0006 & 0.0008 & 0.142 & 0.0630 & NaN \\
+GARCH-MIDAS & 4.57 & 0.0124 $\pm$ 0.0018 & 0.942 $\pm$ 0.023 & 0.0243 $\pm$ 0.0034 & 0.0006 & 0.0002 & 0.065 & 0.0066 & NaN \\
+HAR-RV & 3.70 & 0.0127 $\pm$ 0.0015 & 0.949 $\pm$ 0.023 & 0.0241 $\pm$ 0.0032 & 0.0006 & 0.0001 & 0.295 & 0.3357 & NaN \\
+Martingale (zero forecast) & 5.00 & 0.0114 $\pm$ 0.0030 & 0.932 $\pm$ 0.025 & 0.0241 $\pm$ 0.0034 & 0.0006 & 0.0000 & -0.002 & 0.0518 & NaN \\
+DRAM-T (10-seed ensemble) & 10.00 & 0.0114 $\pm$ 0.0025 & 0.935 $\pm$ 0.014 & 0.0242 $\pm$ 0.0037 & 0.0000 & 0.0000 & -1.085 & 0.0000 & NaN \\
+DRAM-T (Gaussian, GARCH-hybrid vol) & 7.39 & 0.0120 $\pm$ 0.0021 & 0.932 $\pm$ 0.018 & 0.0243 $\pm$ 0.0035 & 0.0009 & 0.0000 & -0.513 & 0.0001 & NaN \\
+DRAM-T (extended gate signals) & 10.87 & 0.0116 $\pm$ 0.0022 & 0.924 $\pm$ 0.011 & 0.0248 $\pm$ 0.0035 & 0.0000 & 0.0000 & -1.354 & 0.0000 & NaN \\
+DRAM-T (extended + per-timestep gate) & 10.43 & 0.0117 $\pm$ 0.0029 & 0.924 $\pm$ 0.003 & 0.0243 $\pm$ 0.0038 & 0.0000 & 0.0000 & -1.378 & 0.0000 & NaN \\
+DRAM-T (per-timestep gate) & 8.70 & 0.0118 $\pm$ 0.0028 & 0.935 $\pm$ 0.010 & 0.0242 $\pm$ 0.0039 & 0.0000 & 0.0000 & -0.930 & 0.0000 & NaN \\
+DRAM-T (Gaussian) & 9.57 & 0.0118 $\pm$ 0.0022 & 0.936 $\pm$ 0.012 & 0.0244 $\pm$ 0.0036 & 0.0000 & 0.0000 & -1.017 & 0.0000 & NaN \\
+DRAM-T ($\lambda_1=2$) & 3.70 & 0.0210 $\pm$ 0.0088 & 0.982 $\pm$ 0.006 & 0.0259 $\pm$ 0.0046 & 0.0006 & 0.0002 & 0.390 & 0.1863 & 3.80 \\
+DRAM-T ($\lambda_1=5$) & 3.26 & 0.0178 $\pm$ 0.0046 & 0.986 $\pm$ 0.004 & 0.0247 $\pm$ 0.0040 & 0.0127 & 0.0000 & 0.485 & 0.3133 & 3.80 \\
+DRAM-T (+ ranking loss) & 3.91 & 0.0168 $\pm$ 0.0031 & 0.985 $\pm$ 0.006 & 0.0245 $\pm$ 0.0037 & 0.0006 & 0.0004 & 0.397 & 0.1788 & 3.75 \\
+DRAM-T (ranking replaces mean) & 1.09 & 0.0169 $\pm$ 0.0028 & 0.988 $\pm$ 0.005 & 0.0246 $\pm$ 0.0032 & 0.0006 & 0.0004 & 0.816 & 0.8787 & 3.75 \\
+DRAM-T (risk-only loss) & 1.30 & 0.0172 $\pm$ 0.0054 & 0.987 $\pm$ 0.002 & 0.0246 $\pm$ 0.0036 & 0.0006 & 0.0004 & 0.780 & 0.8702 & 3.81 \\
+DRAM-T (Student-$t$) & 3.48 & 0.0163 $\pm$ 0.0027 & 0.984 $\pm$ 0.005 & 0.0244 $\pm$ 0.0036 & 0.0006 & 0.0188 & 0.444 & 0.2978 & 3.79 \\
+DRAM-T (Student-$t$, GARCH-hybrid vol) & 4.57 & 0.0180 $\pm$ 0.0027 & 0.984 $\pm$ 0.006 & 0.0247 $\pm$ 0.0035 & 0.0006 & 0.0000 & 0.321 & 0.4515 & 3.83 \\
+DRAM-T (Student-$t$, HAR-hybrid vol) & 1.96 & 0.0177 $\pm$ 0.0018 & 0.983 $\pm$ 0.004 & 0.0259 $\pm$ 0.0035 & 0.0006 & 0.0001 & 0.697 & 0.4747 & 3.84 \\
+\bottomrule
+\end{tabular}
+\end{table}

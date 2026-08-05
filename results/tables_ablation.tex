@@ -1,0 +1,18 @@
+\begin{table}
+\caption{Ablation study: each component removed in turn. Values are mean $\pm$ standard deviation ACROSS SEEDS (folds averaged within a seed). An effect is only interpretable if $\Delta$MAE exceeds the seed spread.}
+\label{tab:ablation}
+\begin{tabular}{lcccccc}
+\toprule
+Configuration & seeds & MAE & $\Delta$MAE vs full & DirAcc & Vol RMSE & VaR breach (\%) \\
+\midrule
+Full model & 5 & 0.0339 $\pm$ 0.0008 & -- & 0.534 $\pm$ 0.020 & 0.0119 $\pm$ 0.0007 & 9.70 \\
+-- sentiment & 5 & 0.0338 $\pm$ 0.0009 & -0.00001 & 0.539 $\pm$ 0.017 & 0.0114 $\pm$ 0.0002 & 10.78 \\
+sentiment permuted (same architecture) & 5 & 0.0341 $\pm$ 0.0005 & +0.00020 & 0.533 $\pm$ 0.017 & 0.0115 $\pm$ 0.0006 & 10.61 \\
+-- macro & 5 & 0.0337 $\pm$ 0.0002 & -0.00018 & 0.536 $\pm$ 0.016 & 0.0121 $\pm$ 0.0003 & 9.65 \\
+macro permuted (same architecture) & 5 & 0.0341 $\pm$ 0.0020 & +0.00022 & 0.538 $\pm$ 0.016 & 0.0123 $\pm$ 0.0006 & 9.30 \\
+-- dynamic weighting & 5 & 0.0336 $\pm$ 0.0006 & -0.00025 & 0.531 $\pm$ 0.026 & 0.0125 $\pm$ 0.0006 & 9.43 \\
+-- risk-aware head & 5 & 0.0339 $\pm$ 0.0005 & +0.00009 & 0.541 $\pm$ 0.013 & 0.0140 $\pm$ 0.0006 & 17.87 \\
+numerical only & 5 & 0.0340 $\pm$ 0.0016 & +0.00012 & 0.543 $\pm$ 0.018 & 0.0135 $\pm$ 0.0019 & 8.65 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,69 @@
+\begin{table}
+\caption{RQ2: effect of regime-adaptive rolling volatility calibration on 10-day portfolio VaR (nominal breach rate 5\%). Identical predictions under both columns; only the post-hoc calibration differs.}
+\label{tab:calibration}
+\begin{tabular}{lcccccc}
+\toprule
+Model & Breach global (\%) & Breach rolling (\%) & Kupiec $p$ global & Kupiec $p$ rolling & ES $Z_2$ global & ES $Z_2$ rolling \\
+\midrule
+ablation_full_s42 & 11.30 & 10.00 & 0.0000 & 0.0000 & -1.675 & -1.207 \\
+ablation_full_s43 & 10.43 & 8.91 & 0.0000 & 0.0001 & -1.445 & -0.940 \\
+ablation_full_s44 & 10.43 & 9.78 & 0.0000 & 0.0000 & -1.412 & -1.128 \\
+ablation_full_s45 & 10.87 & 8.70 & 0.0000 & 0.0001 & -1.603 & -0.923 \\
+ablation_full_s46 & 12.39 & 11.09 & 0.0000 & 0.0000 & -1.954 & -1.375 \\
+ablation_no_macro_s42 & 10.43 & 10.00 & 0.0000 & 0.0000 & -1.584 & -1.295 \\
+ablation_no_macro_s43 & 11.52 & 10.00 & 0.0000 & 0.0001 & -1.746 & -1.200 \\
+ablation_no_macro_s44 & 10.00 & 10.22 & 0.0000 & 0.0000 & -1.453 & -1.208 \\
+ablation_no_macro_s45 & 11.09 & 8.48 & 0.0000 & 0.0000 & -1.499 & -0.806 \\
+ablation_no_macro_s46 & 11.09 & 9.57 & 0.0000 & 0.0000 & -1.498 & -0.978 \\
+ablation_no_sentiment_s42 & 12.83 & 10.00 & 0.0000 & 0.0000 & -1.954 & -1.059 \\
+ablation_no_sentiment_s43 & 10.65 & 9.78 & 0.0000 & 0.0000 & -1.432 & -1.050 \\
+ablation_no_sentiment_s44 & 12.61 & 12.17 & 0.0000 & 0.0000 & -1.797 & -1.600 \\
+ablation_no_sentiment_s45 & 11.74 & 10.22 & 0.0000 & 0.0000 & -2.434 & -1.350 \\
+ablation_no_sentiment_s46 & 13.91 & 11.74 & 0.0000 & 0.0000 & -2.938 & -1.832 \\
+ablation_numerical_only_s42 & 10.00 & 8.91 & 0.0000 & 0.0000 & -1.363 & -0.941 \\
+ablation_numerical_only_s43 & 8.26 & 7.39 & 0.0000 & 0.0000 & -0.876 & -0.610 \\
+ablation_numerical_only_s44 & 10.43 & 10.00 & 0.0000 & 0.0001 & -1.314 & -1.058 \\
+ablation_numerical_only_s45 & 8.48 & 8.26 & 0.0000 & 0.0001 & -1.014 & -0.861 \\
+ablation_numerical_only_s46 & 8.91 & 8.70 & 0.0000 & 0.0000 & -1.226 & -0.925 \\
+ablation_perm_macro_s42 & 9.57 & 9.35 & 0.0000 & 0.0000 & -1.101 & -0.927 \\
+ablation_perm_macro_s43 & 8.70 & 7.17 & 0.0000 & 0.0006 & -0.901 & -0.547 \\
+ablation_perm_macro_s44 & 11.30 & 10.43 & 0.0000 & 0.0000 & -1.678 & -1.292 \\
+ablation_perm_macro_s45 & 10.43 & 9.57 & 0.0000 & 0.0000 & -1.600 & -1.121 \\
+ablation_perm_macro_s46 & 9.78 & 10.00 & 0.0000 & 0.0000 & -1.352 & -1.067 \\
+ablation_perm_sentiment_s42 & 14.57 & 11.96 & 0.0000 & 0.0000 & -3.592 & -1.873 \\
+ablation_perm_sentiment_s43 & 12.39 & 10.65 & 0.0000 & 0.0000 & -1.810 & -1.311 \\
+ablation_perm_sentiment_s44 & 11.09 & 10.22 & 0.0000 & 0.0000 & -1.603 & -1.230 \\
+ablation_perm_sentiment_s45 & 12.61 & 10.65 & 0.0000 & 0.0000 & -2.117 & -1.343 \\
+ablation_perm_sentiment_s46 & 10.22 & 9.57 & 0.0000 & 0.0000 & -1.431 & -1.040 \\
+ablation_point_only_s42 & 21.52 & 15.22 & 0.0000 & 0.0000 & -10.224 & -3.671 \\
+ablation_point_only_s43 & 24.35 & 17.17 & 0.0000 & 0.0000 & -12.586 & -3.852 \\
+ablation_point_only_s44 & 25.43 & 16.96 & 0.0000 & 0.0000 & -11.246 & -4.574 \\
+ablation_point_only_s45 & 26.09 & 21.52 & 0.0000 & 0.0000 & 148511264959095.031 & -5.531 \\
+ablation_point_only_s46 & 26.74 & 18.48 & 0.0000 & 0.0000 & -14.897 & -5.302 \\
+ablation_static_fusion_s42 & 8.70 & 8.04 & 0.0000 & 0.0000 & -1.053 & -0.716 \\
+ablation_static_fusion_s43 & 11.74 & 10.00 & 0.0000 & 0.0001 & -1.647 & -1.145 \\
+ablation_static_fusion_s44 & 11.09 & 9.35 & 0.0000 & 0.0001 & -1.543 & -0.980 \\
+ablation_static_fusion_s45 & 11.96 & 10.43 & 0.0000 & 0.0000 & -2.296 & -1.439 \\
+ablation_static_fusion_s46 & 11.96 & 9.35 & 0.0000 & 0.0000 & -1.825 & -1.050 \\
+DCC-GARCH & 5.43 & 5.43 & 0.0006 & 0.0006 & -0.083 & -0.083 \\
+GARCH(1,1) & 4.35 & 4.35 & 0.0006 & 0.0006 & 0.142 & 0.142 \\
+GARCH-MIDAS & 4.57 & 4.57 & 0.0006 & 0.0006 & 0.065 & 0.065 \\
+HAR-RV & 3.70 & 3.70 & 0.0006 & 0.0006 & 0.295 & 0.295 \\
+Martingale (zero forecast) & 5.00 & 5.00 & 0.0006 & 0.0006 & -0.002 & -0.002 \\
+DRAM-T (10-seed ensemble) & 10.43 & 10.00 & 0.0000 & 0.0000 & -1.360 & -1.085 \\
+DRAM-T (Gaussian, GARCH-hybrid vol) & 10.22 & 7.39 & 0.0000 & 0.0009 & -1.242 & -0.513 \\
+DRAM-T (extended gate signals) & 11.30 & 10.87 & 0.0000 & 0.0000 & -1.637 & -1.354 \\
+DRAM-T (extended + per-timestep gate) & 9.78 & 10.43 & 0.0000 & 0.0000 & -1.395 & -1.378 \\
+DRAM-T (per-timestep gate) & 9.13 & 8.70 & 0.0000 & 0.0000 & -1.122 & -0.930 \\
+DRAM-T (Gaussian) & 10.87 & 9.57 & 0.0000 & 0.0000 & -1.473 & -1.017 \\
+DRAM-T ($\lambda_1=2$) & 6.30 & 3.70 & 0.0006 & 0.0006 & -0.047 & 0.390 \\
+DRAM-T ($\lambda_1=5$) & 4.13 & 3.26 & 0.0006 & 0.0127 & 0.320 & 0.485 \\
+DRAM-T (+ ranking loss) & 5.87 & 3.91 & 0.0006 & 0.0006 & 0.093 & 0.397 \\
+DRAM-T (ranking replaces mean) & 2.17 & 1.09 & 0.0006 & 0.0006 & 0.643 & 0.816 \\
+DRAM-T (risk-only loss) & 0.87 & 1.30 & 0.0006 & 0.0006 & 0.828 & 0.780 \\
+DRAM-T (Student-$t$) & 4.78 & 3.48 & 0.0006 & 0.0006 & 0.213 & 0.444 \\
+DRAM-T (Student-$t$, GARCH-hybrid vol) & 6.30 & 4.57 & 0.0006 & 0.0006 & -0.004 & 0.321 \\
+DRAM-T (Student-$t$, HAR-hybrid vol) & 5.00 & 1.96 & 0.0006 & 0.0006 & 0.206 & 0.697 \\
+\bottomrule
+\end{tabular}
+\end{table}
