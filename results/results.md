@@ -221,6 +221,36 @@ null**, by 6–9%. DRAM-T lands within 1.3% of DCC-GARCH, a model included in
 the study specifically because forecasting a correlation matrix is what it is
 for.
 
+#### Correlation forecasts *are* statistically separable — unlike point forecasts
+
+Running the identical machinery (Diebold–Mariano with HAC variance, Holm
+correction, and a block-bootstrap Model Confidence Set) on per-anchor
+correlation errors gives a different answer from the point-forecast case:
+
+| | point forecasts | correlation forecasts |
+|---|---|---|
+| DM + Holm significant | 1 / 87 | **10 / 75** |
+| MCS retained (α = 0.10) | 88 / 88 | **69 / 76** |
+
+The seven models the correlation MCS eliminates are **exactly the ones whose
+correlation head was not trained**: all five `point_only` seeds (risk heads
+detached from the loss, so the Frobenius term is absent) plus two marginal
+ablation seeds. Every one of them is *worse than the static null*:
+
+| | mean Corr RMSE |
+|---|---|
+| `point_only` (risk head removed) | **0.5981** |
+| static train correlation (null) | 0.3782 |
+| all models with a trained risk head | **0.3633** |
+
+**This is the only statistically significant ablation effect in the entire
+study** (p ≈ 1e-11 against the reference). It is a direct, quantitative
+demonstration that the composite loss's risk terms do real work: with them the
+correlation head beats a constant matrix, without them it is markedly worse
+than one. The result the CPU-era draft asserted qualitatively for the
+risk-aware head now has significance behind it — on correlation, not on the
+mean.
+
 This is the second output that demonstrably works. Against the martingale
 result for the mean, the picture across the three heads is: the **mean** is
 not forecastable, the **volatility** is (and is now as well calibrated as
@@ -283,6 +313,48 @@ standard deviation (0.00095), and the static-fusion ablation remains
 nominally *better* than the full dynamic model (−0.00025). Enriching the gate
 with VIX level and slope, trailing average correlation and drawdown did not
 change this. Gating remains interpretable but not demonstrably useful.
+
+---
+
+## Fold sensitivity — does any conclusion rest on one test block?
+
+Fold 0 (2023-03 – 2023-09) is anomalous: a low-volatility rally in which the
+10-day portfolio return averaged +1.83%, the worst loss was −6.07%, and only
+25% of windows were negative. No model breaches its VaR there, so every model
+including the martingale null fails Kupiec on that fold, and any
+minimum-over-folds statistic is dominated by it. Each headline metric was
+therefore recomputed with each fold left out in turn
+(`analysis_fold_sensitivity.csv`).
+
+**The negative point-accuracy result gets stronger, not weaker:**
+
+| Folds used | Models beating the martingale null (of 88) |
+|---|---|
+| all four | 20 / 88 |
+| **excluding fold 0** | **7 / 88** |
+| excluding fold 1 | 28 / 88 |
+| excluding fold 2 | 26 / 88 |
+| excluding fold 3 | 29 / 88 |
+
+Whatever edge the models hold over a constant zero forecast comes
+disproportionately from the calm fold. Across the three more volatile blocks,
+**only 7 of 88 models beat predicting nothing.**
+
+(HAR-RV and the martingale have identical MAE in every column, as they must:
+HAR-RV models variance and leaves the mean at zero. It is a useful check that
+the pipeline is doing what it claims.)
+
+**The RQ2 result is robust to fold choice:**
+
+| Model | drop f0 | drop f1 | drop f2 | drop f3 | all |
+|---|---|---|---|---|---|
+| DRAM-T ensemble, Gaussian | 13.0% | 9.0% | 7.8% | 10.1% | 10.0% |
+| **DRAM-T ensemble, Student-t + GARCH** | 6.1% | 3.8% | 3.2% | 5.2% | **4.6%** |
+| GARCH(1,1) | 5.8% | 4.4% | 3.2% | 4.1% | 4.3% |
+
+The Student-t + GARCH ensemble sits near the nominal 5% in every variant and
+the Gaussian one fails in every variant. Neither conclusion depends on which
+fold is included.
 
 ---
 

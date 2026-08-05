@@ -264,6 +264,32 @@ def _load_abs_errors(run_dir) -> tuple[np.ndarray, np.ndarray] | None:
     return np.concatenate(errs), np.concatenate(anchors)
 
 
+def _load_corr_errors(run_dir) -> tuple[np.ndarray, np.ndarray] | None:
+    """Per-anchor mean |correlation error| over the strict upper triangle.
+
+    Same per-anchor loss shape as _load_abs_errors, so the correlation
+    forecasts can go through exactly the same Diebold-Mariano, Holm and Model
+    Confidence Set machinery as the point forecasts. Only runs carrying a
+    learned correlation matrix are returned; a run without one has nothing of
+    its own to test.
+    """
+    from pathlib import Path
+    paths = sorted(Path(run_dir).glob("fold*/test_predictions.npz"))
+    if not paths:
+        return None
+    errs, anchors = [], []
+    for p in paths:
+        z = np.load(p)
+        if "corr" not in z.files or not z["corr"].size or not z["y_corr"].size:
+            return None
+        S = z["y_corr"].shape[-1]
+        iu = np.triu_indices(S, k=1)
+        d = z["corr"][:, iu[0], iu[1]] - z["y_corr"][:, iu[0], iu[1]]
+        errs.append(np.abs(d).mean(axis=1))
+        anchors.append(z["anchor_dates"])
+    return np.concatenate(errs), np.concatenate(anchors)
+
+
 def main() -> None:
     import argparse
     import logging
@@ -347,6 +373,48 @@ def main() -> None:
     if mcs["eliminated"]:
         logger.info("  eliminated (worst first): %s",
                     [n for n, _ in mcs["eliminated"]][:12])
+
+    # ---- correlation forecasts: same tests, separate family --------------
+    # The correlation head is a distinct claim from the mean forecast and
+    # deserves the same treatment rather than an eyeballed table of RMSEs.
+    corr_losses: dict[str, np.ndarray] = {}
+    for d in sorted(runs_dir.iterdir()):
+        if not d.is_dir() or d.name == "sweep":
+            continue
+        loaded = _load_corr_errors(d)
+        if loaded is None:
+            continue
+        err, anchor = loaded
+        if len(err) == len(ref_err) and np.array_equal(anchor, ref_anchor):
+            corr_losses[d.name] = err
+    if len(corr_losses) >= 2:
+        ref_corr_name = (args.reference if args.reference in corr_losses
+                         else min(corr_losses, key=lambda k: corr_losses[k].mean()))
+        ref_c = corr_losses[ref_corr_name]
+        rows = []
+        for name, err in corr_losses.items():
+            if name == ref_corr_name:
+                continue
+            dm = diebold_mariano(ref_c, err, horizon=h_max)
+            rows.append({"model_A": ref_corr_name, "model_B": name,
+                         "mean_diff_A_minus_B": dm["mean_diff"],
+                         "dm_stat": dm["DM"], "dm_p": dm["pvalue"]})
+        dfc = pd.DataFrame(rows)
+        dfc["dm_p_holm"] = holm_bonferroni(dfc["dm_p"].tolist())
+        dfc.to_csv(results_dir / "stats_corr_wilcoxon.csv", index=False)
+
+        mcs_c = model_confidence_set(corr_losses, alpha=args.mcs_alpha,
+                                     n_boot=args.mcs_boot, block=h_max,
+                                     seed=base["seed"])
+        pd.DataFrame([{"run": r, "in_mcs": r in set(mcs_c["mcs"]),
+                       "mcs_pvalue": mcs_c["pvalues"].get(r, np.nan),
+                       "mean_corr_err": float(np.mean(corr_losses[r]))}
+                      for r in sorted(corr_losses)]).sort_values(
+            "mean_corr_err").to_csv(results_dir / "stats_corr_mcs.csv", index=False)
+        logger.info("correlation forecasts: reference %s | DM+Holm significant "
+                    "%d/%d | MCS retains %d of %d at alpha=%.2f",
+                    ref_corr_name, int((dfc["dm_p_holm"] < 0.05).sum()), len(dfc),
+                    len(mcs_c["mcs"]), len(corr_losses), args.mcs_alpha)
 
     dfw = pd.DataFrame(wilcoxon_rows)
     if len(dfw):
