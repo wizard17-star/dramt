@@ -1,0 +1,11 @@
+T: 40
+d_model: 256
+dataset_suffix: ''
+dist: student_t
+lambda1: 0.1
+lambda2: 0.1
+lr: 0.0005
+n_layers: 2
+name: dramt_rank_only
+point_loss: none
+rank_weight: 1.0

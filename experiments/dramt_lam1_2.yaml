@@ -1,0 +1,11 @@
+T: 40
+d_model: 256
+dataset_suffix: ''
+dist: student_t
+lambda1: 2.0
+lambda2: 0.1
+lr: 0.0005
+n_layers: 2
+name: dramt_lam1_2
+point_loss: huber
+rank_weight: 0.0

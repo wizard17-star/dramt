@@ -78,18 +78,42 @@ ENSEMBLE_SEEDS = list(range(42, 52))   # 10 seeds
 ABLATION_SEEDS = [42, 43, 44, 45, 46]
 
 
-def run(args: list[str], label: str = "") -> bool:
+def run(args: list[str], label: str = "", expect_run: str | None = None,
+        n_folds: int = 4) -> bool:
+    """Run one job; if it exits non-zero but produced complete artifacts,
+    treat it as success.
+
+    Observed on this machine: baseline_lstm, baseline_gru and
+    baseline_sentiment_lstm exited with 3221226505
+    (0xC0000409, STATUS_STACK_BUFFER_OVERRUN) AFTER logging "4 fold(s) done"
+    and writing every prediction file. Several CUDA processes containing cuDNN
+    RNN layers were tearing down concurrently; the crash is at interpreter
+    exit, past all of the work. Verified: 4/4 folds, results.json present, all
+    values finite, correct shape.
+
+    The check is on artifacts rather than on the specific exit code, so it
+    generalises: a job only counts as failed if its outputs are actually
+    missing or incomplete.
+    """
     t0 = time.time()
     print(f"[chain] START {label or ' '.join(args)}", flush=True)
     proc = subprocess.run([sys.executable, "-m", *args], capture_output=True, text=True)
     ok = proc.returncode == 0
+    note = ""
+    if not ok and expect_run and done(expect_run, n_folds):
+        # the process died, but every artifact it was supposed to produce is
+        # on disk, complete and at the current horizon count
+        ok = True
+        note = (f" [exit code {proc.returncode} at teardown; "
+                f"{expect_run} artifacts verified complete]")
     tail = "\n".join(proc.stdout.splitlines()[-4:] + proc.stderr.splitlines()[-6:])
     print(f"[chain] {'OK' if ok else f'FAIL rc={proc.returncode}'} "
-          f"({time.time() - t0:.0f}s) {label or ' '.join(args)}\n{tail}", flush=True)
+          f"({time.time() - t0:.0f}s) {label or ' '.join(args)}{note}\n{tail}", flush=True)
     return ok
 
 
-def run_many(jobs: list[tuple[list[str], str]], parallel: int) -> None:
+def run_many(jobs: list[tuple[list[str], str, str | None]], parallel: int,
+             n_folds: int = 4) -> None:
     """Run independent training jobs, optionally concurrently.
 
     Safe to parallelise because every job writes to its own runs/<name>
@@ -102,15 +126,16 @@ def run_many(jobs: list[tuple[list[str], str]], parallel: int) -> None:
     parallel=1 reproduces the original serial behaviour exactly.
     """
     if parallel <= 1:
-        results = [(label, run(args, label)) for args, label in jobs]
+        results = [(label, run(args, label, exp, n_folds))
+                   for args, label, exp in jobs]
     else:
         from concurrent.futures import ThreadPoolExecutor
         print(f"[chain] running {len(jobs)} jobs with {parallel} workers", flush=True)
         # Threads, not processes: each job is an independent subprocess, so the
         # GIL is irrelevant and this only needs to supervise them.
         with ThreadPoolExecutor(max_workers=parallel) as pool:
-            oks = list(pool.map(lambda j: run(*j), jobs))
-        results = list(zip([label for _, label in jobs], oks))
+            oks = list(pool.map(lambda j: run(j[0], j[1], j[2], n_folds), jobs))
+        results = list(zip([label for _, label, _ in jobs], oks))
 
     # A failed job only prints one FAIL line, which is easy to lose among
     # dozens of interleaved parallel logs. Summarise explicitly.
@@ -270,7 +295,7 @@ def main() -> None:
             return True
         return False
 
-    jobs: list[tuple[list[str], str]] = []
+    jobs: list[tuple[list[str], str, str | None]] = []
 
     # ---- 1. baselines ----------------------------------------------------
     if want(1):
@@ -284,7 +309,8 @@ def main() -> None:
             # is silently dropped by src/stats_tests.
             jobs.append((["src.baselines", "--model", model, "--suffix", "",
                           "--T", str(best["T"])],
-                         f"baseline {model} (T={best['T']})"))
+                         f"baseline {model} (T={best['T']})",
+                         f"baseline_{model}"))
 
     # ---- 2. risk variants ------------------------------------------------
     if want(2):
@@ -292,7 +318,7 @@ def main() -> None:
             if skip(name):
                 continue
             p = write_exp(name, best, args.dry_run, dist=dist, vol_mode=vol_mode)
-            jobs.append((["src.train", "--config", str(p)], f"risk variant {name}"))
+            jobs.append((["src.train", "--config", str(p)], f"risk variant {name}", name))
 
     # ---- 3. RQ3 variants -------------------------------------------------
     if want(3):
@@ -301,7 +327,7 @@ def main() -> None:
                 continue
             p = write_exp(name, best, args.dry_run, regime_signals=signals,
                           gate_per_timestep=per_step)
-            jobs.append((["src.train", "--config", str(p)], f"RQ3 variant {name}"))
+            jobs.append((["src.train", "--config", str(p)], f"RQ3 variant {name}", name))
 
     # ---- 3b. objective variants (loss rebalancing / ranking) --------------
     if want(9):
@@ -311,7 +337,7 @@ def main() -> None:
             p = write_exp(name, best, args.dry_run, lambda1=lam1, point_loss=point_loss,
                           rank_weight=rank_w, dist="student_t")
             jobs.append((["src.train", "--config", str(p)],
-                         f"objective variant {name}"))
+                         f"objective variant {name}", name))
 
     # ---- 5a. seed runs (ensemble members) --------------------------------
     members = [f"dramt_seed{s}" for s in ENSEMBLE_SEEDS]
@@ -321,7 +347,7 @@ def main() -> None:
             if skip(name):
                 continue
             p = write_exp(name, best, args.dry_run, seed=seed)
-            jobs.append((["src.train", "--config", str(p)], f"seed {seed}"))
+            jobs.append((["src.train", "--config", str(p)], f"seed {seed}", name))
 
     # ---- 4. ablations, one job per (config, seed) ------------------------
     # 8 configs x 5 seeds = 40 runs. Looping them inside a single src.ablation
@@ -336,14 +362,15 @@ def main() -> None:
                     continue
                 jobs.append((["src.ablation", "--suffix", "",
                               "--configs", cfg_name, "--seeds", str(seed)],
-                             f"ablation {cfg_name} seed {seed}"))
+                             f"ablation {cfg_name} seed {seed}",
+                             f"ablation_{cfg_name}_s{seed}"))
 
     # All of the above are independent runs writing to distinct directories,
     # so they can be dispatched together.
     if args.dry_run:
         print(f"\n[chain] DRY RUN: {len(jobs)} job(s) would be dispatched "
               f"with --parallel {args.parallel}\n", flush=True)
-        for i, (cmd, label) in enumerate(jobs, 1):
+        for i, (cmd, label, _exp) in enumerate(jobs, 1):
             print(f"  {i:3d}. {label:42s} | python -m {' '.join(cmd)}", flush=True)
         expected = expected_run_names()
         have = {d.name for d in RUNS.iterdir() if d.is_dir()}
@@ -353,7 +380,7 @@ def main() -> None:
         return
 
     if jobs:
-        run_many(jobs, args.parallel)
+        run_many(jobs, args.parallel, args.n_folds)
 
 
     # ---- 5b. build the ensemble (needs every member finished) -------------
