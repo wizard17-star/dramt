@@ -1,0 +1,226 @@
+[
+  {
+    "point": {
+      "MAE": 0.026164598762989044,
+      "MSE": 0.001262026373296976,
+      "RMSE": 0.035525010531975584,
+      "MAPE": 142.4777626991272,
+      "DirAcc": 0.6161739130434782
+    },
+    "correlation": {
+      "CorrRMSE": 0.28948166966438293,
+      "CorrMAE": 0.2120649516582489,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3102644212952506
+    },
+    "epistemic": {
+      "mean_sigma_epistemic": 0.002087935106828809,
+      "mean_sigma_aleatoric": 0.04168759658932686,
+      "epistemic_share": 0.002311581512913108
+    },
+    "sigma_calibration": {
+      "mode": "rolling",
+      "window": 120,
+      "mean": 1.109938413626739,
+      "min": 0.8078518010574225,
+      "max": 1.5870534794527456
+    },
+    "risk": {
+      "VolRMSE": 0.011244682317763878,
+      "CRPS": 0.01985430470535136,
+      "Coverage95": 0.9730434782608696
+    },
+    "var_backtest": {
+      "breach_rate": 0.008695652173913044,
+      "nominal": 0.050000000000000044,
+      "kupiec": {
+        "n": 115,
+        "breaches": 1,
+        "rate": 0.008695652173913044,
+        "LR": 6.205192377866972,
+        "pvalue": 0.012737610478289363
+      },
+      "christoffersen": {
+        "LR": -0.0,
+        "pvalue": 1.0
+      },
+      "mean_ES_pred": 0.09892701873390024,
+      "mean_exceed_loss": 0.06074807718396187,
+      "var_series_mean": 0.07670393481552613,
+      "acerbi_szekely": {
+        "Z2": 0.8489321327461573,
+        "n": 115,
+        "breaches": 1,
+        "pvalue": 0.9919
+      }
+    }
+  },
+  {
+    "point": {
+      "MAE": 0.029640285298228264,
+      "MSE": 0.001599933602847159,
+      "RMSE": 0.039999170026978795,
+      "MAPE": 160.9400987625122,
+      "DirAcc": 0.5770434782608695
+    },
+    "correlation": {
+      "CorrRMSE": 0.32375380396842957,
+      "CorrMAE": 0.2416670024394989,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3250711120201909
+    },
+    "epistemic": {
+      "mean_sigma_epistemic": 0.002360033802688122,
+      "mean_sigma_aleatoric": 0.050401993095874786,
+      "epistemic_share": 0.0020838077180087566
+    },
+    "sigma_calibration": {
+      "mode": "rolling",
+      "window": 120,
+      "mean": 0.709507982187803,
+      "min": 0.45539217329795867,
+      "max": 0.8685416957222982
+    },
+    "risk": {
+      "VolRMSE": 0.00955595016000843,
+      "CRPS": 0.021316794507571957,
+      "Coverage95": 0.9316521739130434
+    },
+    "var_backtest": {
+      "breach_rate": 0.08695652173913043,
+      "nominal": 0.050000000000000044,
+      "kupiec": {
+        "n": 115,
+        "breaches": 10,
+        "rate": 0.08695652173913043,
+        "LR": 2.7352231618787357,
+        "pvalue": 0.09815778872318981
+      },
+      "christoffersen": {
+        "LR": 20.39908907764532,
+        "pvalue": 6.285970942876418e-06
+      },
+      "mean_ES_pred": 0.07142186307885882,
+      "mean_exceed_loss": 0.07783055867999791,
+      "var_series_mean": 0.053799068397481345,
+      "acerbi_szekely": {
+        "Z2": -0.9479115865197254,
+        "n": 115,
+        "breaches": 10,
+        "pvalue": 0.0172
+      }
+    }
+  },
+  {
+    "point": {
+      "MAE": 0.03666532412171364,
+      "MSE": 0.002637202385812998,
+      "RMSE": 0.05135369885230272,
+      "MAPE": 174.8335599899292,
+      "DirAcc": 0.5410434782608695
+    },
+    "correlation": {
+      "CorrRMSE": 0.3698374330997467,
+      "CorrMAE": 0.2978454828262329,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3901618777157479
+    },
+    "epistemic": {
+      "mean_sigma_epistemic": 0.0020996283274143934,
+      "mean_sigma_aleatoric": 0.043461211025714874,
+      "epistemic_share": 0.002222737530246377
+    },
+    "sigma_calibration": {
+      "mode": "rolling",
+      "window": 120,
+      "mean": 1.0594576664699256,
+      "min": 0.703675921781248,
+      "max": 1.3214124099924964
+    },
+    "risk": {
+      "VolRMSE": 0.015570115068374017,
+      "CRPS": 0.02757625350682388,
+      "Coverage95": 0.9078260869565218
+    },
+    "var_backtest": {
+      "breach_rate": 0.1826086956521739,
+      "nominal": 0.050000000000000044,
+      "kupiec": {
+        "n": 115,
+        "breaches": 21,
+        "rate": 0.1826086956521739,
+        "LR": 26.138866761724074,
+        "pvalue": 3.1772374098348877e-07
+      },
+      "christoffersen": {
+        "LR": 46.90922672068558,
+        "pvalue": 7.435163595914673e-12
+      },
+      "mean_ES_pred": 0.09065859177060612,
+      "mean_exceed_loss": 0.08296829127662239,
+      "var_series_mean": 0.06881591093336457,
+      "acerbi_szekely": {
+        "Z2": -3.1599419671204956,
+        "n": 115,
+        "breaches": 21,
+        "pvalue": 0.0
+      }
+    }
+  },
+  {
+    "point": {
+      "MAE": 0.039020225405693054,
+      "MSE": 0.002861225279048085,
+      "RMSE": 0.053490422311364166,
+      "MAPE": 150.07832050323486,
+      "DirAcc": 0.4841739130434783
+    },
+    "correlation": {
+      "CorrRMSE": 0.489002525806427,
+      "CorrMAE": 0.36971503496170044,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.48736895176171385
+    },
+    "epistemic": {
+      "mean_sigma_epistemic": 0.0015995607245713472,
+      "mean_sigma_aleatoric": 0.0420793816447258,
+      "epistemic_share": 0.00134752388112247
+    },
+    "sigma_calibration": {
+      "mode": "rolling",
+      "window": 120,
+      "mean": 1.1833576500375307,
+      "min": 1.0293708636882262,
+      "max": 1.348224199640535
+    },
+    "risk": {
+      "VolRMSE": 0.011502482858032853,
+      "CRPS": 0.028506368801277868,
+      "Coverage95": 0.9260869565217391
+    },
+    "var_backtest": {
+      "breach_rate": 0.0782608695652174,
+      "nominal": 0.050000000000000044,
+      "kupiec": {
+        "n": 115,
+        "breaches": 9,
+        "rate": 0.0782608695652174,
+        "LR": 1.6621001543952048,
+        "pvalue": 0.19732000365159952
+      },
+      "christoffersen": {
+        "LR": 24.26872938842653,
+        "pvalue": 8.37883517124105e-07
+      },
+      "mean_ES_pred": 0.10605083287902843,
+      "mean_exceed_loss": 0.08686070072152588,
+      "var_series_mean": 0.08204690731711022,
+      "acerbi_szekely": {
+        "Z2": -0.49548682402159616,
+        "n": 115,
+        "breaches": 9,
+        "pvalue": 0.1173
+      }
+    }
+  }
+]

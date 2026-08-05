@@ -7,6 +7,12 @@
       "MAPE": 256.34968280792236,
       "DirAcc": 0.652
     },
+    "correlation": {
+      "CorrRMSE": 0.30164244771003723,
+      "CorrMAE": 0.21512393653392792,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3102644212952506
+    },
     "sigma_calibration": {
       "mode": "rolling",
       "window": 120,
@@ -51,6 +57,12 @@
       "RMSE": 0.041987500649979866,
       "MAPE": 182.81688690185547,
       "DirAcc": 0.5095652173913043
+    },
+    "correlation": {
+      "CorrRMSE": 0.3160543143749237,
+      "CorrMAE": 0.24552583694458008,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3250711120201909
     },
     "sigma_calibration": {
       "mode": "rolling",
@@ -97,6 +109,12 @@
       "MAPE": 120.29397487640381,
       "DirAcc": 0.5353043478260869
     },
+    "correlation": {
+      "CorrRMSE": 0.37832432985305786,
+      "CorrMAE": 0.3025244176387787,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.3901618777157479
+    },
     "sigma_calibration": {
       "mode": "rolling",
       "window": 120,
@@ -141,6 +159,12 @@
       "RMSE": 0.05335103091560096,
       "MAPE": 151.0252833366394,
       "DirAcc": 0.48434782608695653
+    },
+    "correlation": {
+      "CorrRMSE": 0.48689281940460205,
+      "CorrMAE": 0.3679308295249939,
+      "has_learned_corr": true,
+      "CorrRMSE_static_baseline": 0.48736895176171385
     },
     "sigma_calibration": {
       "mode": "rolling",

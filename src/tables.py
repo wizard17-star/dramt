@@ -262,6 +262,34 @@ def build_tables() -> None:
            "Comparative analysis: proposed model versus baselines "
            "(point accuracy and risk calibration).", "tab:comparison")
 
+    # ---- correlation accuracy -------------------------------------------
+    if "CorrRMSE" in models.columns and models["CorrRMSE"].notna().any():
+        corr_rows = []
+        static_ref = float(models["CorrRMSE_static_baseline"].dropna().iloc[0]) \
+            if "CorrRMSE_static_baseline" in models.columns else np.nan
+        cm = models.dropna(subset=["CorrRMSE"]).sort_values("CorrRMSE")
+        for _, r in cm.iterrows():
+            if not bool(_v(r, "learned_corr", False)):
+                continue
+            corr_rows.append({
+                "Model": r["label"],
+                "Corr RMSE": _fmt(_v(r, "CorrRMSE"), None, 4),
+                "Corr MAE": _fmt(_v(r, "CorrMAE"), None, 4),
+                "vs static baseline": (
+                    f"{100 * (_v(r, 'CorrRMSE') / static_ref - 1):+.1f}\\%"
+                    if np.isfinite(static_ref) else "--"),
+            })
+        if corr_rows:
+            corr_rows.append({
+                "Model": "\\textit{static train correlation (null)}",
+                "Corr RMSE": _fmt(static_ref, None, 4),
+                "Corr MAE": "--", "vs static baseline": "--"})
+            _write(pd.DataFrame(corr_rows), results_dir, "tables_correlation",
+                   "Accuracy of the 5$\\times$5 correlation forecast, strict "
+                   "upper triangle only (the diagonal is 1 by construction). "
+                   "The null is a constant correlation matrix estimated on "
+                   "training data alone.", "tab:correlation")
+
     # ---- RQ2: sigma calibration ----------------------------------------
     # The single most important table for RQ2: the same trained models scored
     # under the original per-fold constant calibration versus the regime

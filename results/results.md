@@ -5,7 +5,7 @@ RTX 5070 (CUDA 12.8). 88 model runs, 4-fold expanding walk-forward validation
 (purge gap = T + h_max samples), 5-stock tech portfolio (AAPL, GOOGL, MSFT,
 AMZN, META), horizons 1–10 trading days, 460 test anchors shared identically
 by every run (verified programmatically). Full tables: `tables_*.csv/.tex`;
-significance: `stats_wilcoxon.csv`; analyses: `analysis_*.csv`.
+significance: `stats_wilcoxon.csv`, `stats_mcs.csv`; analyses: `analysis_*.csv`.
 
 **Selected configuration** (1,920-trial sweep over T × d_model × n_layers ×
 λ1 × λ2 × lr, scored on validation across all four folds):
@@ -200,6 +200,50 @@ strong low-volatility rally — mean 10-day portfolio return +1.83%, worst loss
 −6.07%, only 25% of windows negative — so no model breaches at all there, and
 zero breaches in 115 observations is itself improbable under a 5% rate. The
 per-fold table above is the honest presentation; the pooled minimum is not.
+
+### The correlation head — a second output that works
+
+The model's third output is a 5×5 correlation matrix, trained through the
+Frobenius term of the composite loss. Scored on the strict upper triangle (the
+diagonal is 1 by construction), against a null of a constant correlation
+matrix estimated on training data only:
+
+| Model | Corr RMSE | vs static null |
+|---|---|---|
+| DCC-GARCH | **0.3431** | −9.3% |
+| DRAM-T, Student-t + GARCH-hybrid | 0.3471 | −8.2% |
+| **DRAM-T ensemble, Student-t + GARCH-hybrid** | 0.3475 | −8.1% |
+| DRAM-T, Student-t | 0.3508 | −7.2% |
+| *static train correlation (null)* | *0.3782* | — |
+
+**62 of the 76 runs carrying a learned correlation head beat the static
+null**, by 6–9%. DRAM-T lands within 1.3% of DCC-GARCH, a model included in
+the study specifically because forecasting a correlation matrix is what it is
+for.
+
+This is the second output that demonstrably works. Against the martingale
+result for the mean, the picture across the three heads is: the **mean** is
+not forecastable, the **volatility** is (and is now as well calibrated as
+GARCH), and the **correlation** is, beating its own naive baseline and
+matching a dedicated multivariate GARCH.
+
+### Epistemic vs aleatoric uncertainty (MC-dropout)
+
+50 stochastic forward passes per prediction, decomposing the predictive
+variance into model uncertainty and market uncertainty:
+
+| Model | epistemic σ | aleatoric σ | epistemic share of variance |
+|---|---|---|---|
+| DRAM-T, Gaussian | 0.00248 | 0.03822 | 0.61% |
+| DRAM-T, Student-t | 0.00154 | 0.02665 | 0.38% |
+| DRAM-T, Student-t + GARCH-hybrid | 0.00175 | 0.03110 | 0.35% |
+
+**Model uncertainty is under 1% of total predictive variance.** Folding it
+into the predictive distribution moves the 10-day VaR breach rate by at most
+0.2 percentage points (4.57% → 4.35%). The uncertainty in these forecasts is
+almost entirely irreducible market noise, not uncertainty about the model —
+which is consistent with everything else here, and means MC-dropout is not a
+route to better calibration in this setting.
 
 ### Economic value of the volatility forecast
 

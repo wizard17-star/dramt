@@ -147,6 +147,40 @@ def evaluate_fold(npz_path: Path, horizons: list[int], weights: np.ndarray,
     df = z["df"] if "df" in z.files and z["df"].size else None
 
     out: dict = {"point": point_metrics(y_ret, mu)}
+
+    # ---- correlation accuracy -------------------------------------------
+    # The model emits a 5x5 correlation matrix and the composite loss carries
+    # a Frobenius term weighted by lambda2, which was swept - but none of it
+    # was ever scored. Without this the correlation head is an unverified
+    # claim, and DCC-GARCH (a baseline included precisely because it forecasts
+    # correlations) is never tested on the thing it exists for.
+    #
+    # Scored BEFORE the sigma guard so models with no volatility head still
+    # appear, and only on the strict upper triangle: the diagonal is 1 by
+    # construction in both prediction and target, so including it would
+    # dilute every model's error toward zero identically.
+    if "y_corr" in z.files and z["y_corr"].size:
+        y_corr = z["y_corr"]
+        S = y_corr.shape[-1]
+        iu = np.triu_indices(S, k=1)
+        tgt = y_corr[:, iu[0], iu[1]]
+        pred = (corr[:, iu[0], iu[1]] if corr is not None
+                else np.tile(static_corr, (len(mu), 1, 1))[:, iu[0], iu[1]]
+                if static_corr is not None else None)
+        if pred is not None:
+            out["correlation"] = {
+                "CorrRMSE": float(np.sqrt(np.mean((pred - tgt) ** 2))),
+                "CorrMAE": float(np.mean(np.abs(pred - tgt))),
+                "has_learned_corr": corr is not None,
+            }
+            # The honest reference: a constant correlation matrix estimated on
+            # TRAIN data only. A learned head must beat this to be worth
+            # having - the same logic as the martingale null for the mean.
+            if static_corr is not None:
+                s = np.tile(static_corr, (len(mu), 1, 1))[:, iu[0], iu[1]]
+                out["correlation"]["CorrRMSE_static_baseline"] = float(
+                    np.sqrt(np.mean((s - tgt) ** 2)))
+
     if sigma is None:
         return out
 
@@ -296,6 +330,16 @@ def main() -> None:
         for key in ["MAE", "MSE", "RMSE", "MAPE", "DirAcc"]:
             vals = [f["point"][key] for f in per_fold]
             row[key], row[f"{key}_std"] = float(np.mean(vals)), float(np.std(vals))
+        if all("correlation" in f for f in per_fold):
+            for key in ["CorrRMSE", "CorrMAE", "CorrRMSE_static_baseline"]:
+                vals = [f["correlation"].get(key) for f in per_fold]
+                if all(v is not None for v in vals):
+                    row[key] = float(np.mean(vals))
+            row["learned_corr"] = bool(per_fold[0]["correlation"]["has_learned_corr"])
+        if all("epistemic" in f for f in per_fold):
+            for key in ["mean_sigma_epistemic", "mean_sigma_aleatoric",
+                        "epistemic_share"]:
+                row[key] = float(np.mean([f["epistemic"][key] for f in per_fold]))
         if all("risk" in f for f in per_fold) and per_fold:
             for key in ["VolRMSE", "CRPS", "Coverage95"]:
                 vals = [f["risk"][key] for f in per_fold]

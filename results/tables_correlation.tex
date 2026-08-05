@@ -1,0 +1,27 @@
+\begin{table}
+\caption{Accuracy of the 5$\times$5 correlation forecast, strict upper triangle only (the diagonal is 1 by construction). The null is a constant correlation matrix estimated on training data alone.}
+\label{tab:correlation}
+\begin{tabular}{lccc}
+\toprule
+Model & Corr RMSE & Corr MAE & vs static baseline \\
+\midrule
+DCC-GARCH & 0.3431 & 0.2642 & -9.3\% \\
+DRAM-T (Student-$t$, GARCH-hybrid vol) & 0.3471 & 0.2672 & -8.2\% \\
+DRAM-T (10-seed ensemble, Student-$t$ + GARCH-hybrid) & 0.3475 & 0.2662 & -8.1\% \\
+DRAM-T (extended gate signals) & 0.3489 & 0.2706 & -7.8\% \\
+DRAM-T (Student-$t$) & 0.3508 & 0.2711 & -7.2\% \\
+DRAM-T (Gaussian, GARCH-hybrid vol) & 0.3522 & 0.2711 & -6.9\% \\
+DRAM-T (+ ranking loss) & 0.3566 & 0.2728 & -5.7\% \\
+DRAM-T (extended + per-timestep gate) & 0.3567 & 0.2743 & -5.7\% \\
+DRAM-T (Gaussian) & 0.3580 & 0.2767 & -5.3\% \\
+DRAM-T (10-seed ensemble, Gaussian) & 0.3606 & 0.2728 & -4.7\% \\
+DRAM-T (risk-only loss) & 0.3628 & 0.2795 & -4.1\% \\
+DRAM-T ($\lambda_1=2$) & 0.3687 & 0.2826 & -2.5\% \\
+DRAM-T (ranking replaces mean) & 0.3728 & 0.2787 & -1.4\% \\
+DRAM-T (per-timestep gate) & 0.3730 & 0.2851 & -1.4\% \\
+DRAM-T (Student-$t$, HAR-hybrid vol) & 0.3738 & 0.2848 & -1.2\% \\
+DRAM-T ($\lambda_1=5$) & 0.3753 & 0.2870 & -0.8\% \\
+\textit{static train correlation (null)} & 0.3782 & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
