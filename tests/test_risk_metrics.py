@@ -279,3 +279,94 @@ def test_corrections_handle_nan_pvalues():
         adj = fn(p)
         assert np.isnan(adj[1])
         assert np.isfinite(adj[0]) and np.isfinite(adj[2])
+
+
+# --------------------------------------------------------------------------- #
+# Model Confidence Set
+# --------------------------------------------------------------------------- #
+
+def test_mcs_size_property_under_equal_predictive_ability():
+    """With exchangeable models the MCS must retain all of them MOST of the
+    time - its size property is that a false elimination happens with
+    probability about alpha, not never. Checked across seeds rather than on a
+    single draw, which would be a coin flip at alpha=0.10.
+    """
+    from src.stats_tests import model_confidence_set
+
+    full = 0
+    trials = 10
+    for s in range(trials):
+        rng = np.random.default_rng(100 + s)
+        losses = {f"m{i}": np.abs(rng.normal(0, 1, 600)) for i in range(6)}
+        res = model_confidence_set(losses, alpha=0.10, n_boot=300, block=10, seed=s)
+        full += len(res["mcs"]) == 6
+    # expected ~90% retention; allow generous slack for 10 trials
+    assert full >= 7, f"kept the full set in only {full}/{trials} draws"
+
+
+def test_mcs_never_eliminates_at_alpha_zero():
+    """At alpha=0 nothing can be rejected, so every model must survive."""
+    from src.stats_tests import model_confidence_set
+
+    rng = np.random.default_rng(1)
+    losses = {f"m{i}": np.abs(rng.normal(0, 1, 400)) * (1 + 0.5 * i) for i in range(4)}
+    res = model_confidence_set(losses, alpha=0.0, n_boot=200, block=10, seed=0)
+    assert len(res["mcs"]) == 4
+
+
+def test_mcs_eliminates_clearly_worse_models():
+    """A model with a much larger loss must be dropped, and the good ones kept."""
+    from src.stats_tests import model_confidence_set
+
+    rng = np.random.default_rng(2)
+    n = 800
+    base = np.abs(rng.normal(0, 1, n))
+    losses = {
+        "good_a": base,
+        "good_b": base + rng.normal(0, 0.01, n),
+        "awful": base * 3.0,
+    }
+    res = model_confidence_set(losses, alpha=0.10, n_boot=400, block=10, seed=0)
+    assert "awful" not in res["mcs"]
+    assert "good_a" in res["mcs"] and "good_b" in res["mcs"]
+
+
+def test_mcs_is_nested_in_alpha():
+    """A stricter alpha yields a SMALLER (nested) confidence set."""
+    from src.stats_tests import model_confidence_set
+
+    rng = np.random.default_rng(3)
+    n = 700
+    base = np.abs(rng.normal(0, 1, n))
+    losses = {f"m{i}": base * (1.0 + 0.12 * i) for i in range(5)}
+    loose = model_confidence_set(losses, alpha=0.01, n_boot=400, block=10, seed=0)
+    tight = model_confidence_set(losses, alpha=0.25, n_boot=400, block=10, seed=0)
+    assert len(tight["mcs"]) <= len(loose["mcs"])
+    assert set(tight["mcs"]) <= set(loose["mcs"])
+
+
+def test_mcs_block_bootstrap_respects_autocorrelation():
+    """With strongly autocorrelated losses, a block bootstrap must give a
+    LARGER standard error than an i.i.d. one, hence a more conservative
+    (larger) confidence set. Using i.i.d. resampling here would overstate
+    precision and eliminate models that are not really separable.
+    """
+    from src.stats_tests import model_confidence_set
+
+    rng = np.random.default_rng(4)
+    n = 800
+    # AR(1) noise shared structure, small mean differences
+    e = np.zeros(n)
+    for t in range(1, n):
+        e[t] = 0.9 * e[t - 1] + rng.normal(0, 0.2)
+    losses = {f"m{i}": np.abs(e) + 0.02 * i for i in range(4)}
+    blocked = model_confidence_set(losses, alpha=0.10, n_boot=400, block=40, seed=0)
+    iid = model_confidence_set(losses, alpha=0.10, n_boot=400, block=1, seed=0)
+    assert len(blocked["mcs"]) >= len(iid["mcs"])
+
+
+def test_mcs_single_model():
+    from src.stats_tests import model_confidence_set
+
+    res = model_confidence_set({"only": np.abs(RNG.normal(0, 1, 100))})
+    assert res["mcs"] == ["only"]

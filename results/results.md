@@ -73,6 +73,35 @@ over seeds helps, not an independent finding: the ensemble contains the seed
 it is being compared against. **No baseline and no ablation is separable from
 the proposed model.**
 
+### Model Confidence Set
+
+Pairwise tests can only say that no individual comparison survives correction.
+The Model Confidence Set (Hansen, Lunde & Nason 2011) states the same result
+positively: it returns the set of models that contains the best one with
+probability 1−α. Computed on per-anchor absolute errors with a circular
+**block** bootstrap (block length 10 = the maximum horizon, because
+overlapping forecasts make an i.i.d. bootstrap overstate precision):
+
+| Confidence level | Models retained (of 88) | First exclusions |
+|---|---|---|
+| 90% (α = 0.10) | **88 / 88** | — |
+| 75% (α = 0.25) | 87 / 88 | one individual seed |
+| 50% (α = 0.50) | 86 / 88 | + one ablation seed |
+| 25% (α = 0.75) | 80 / 88 | + TFT, more seeds |
+
+**At the 90% level the confidence set contains every model in the study** —
+the proposed architecture, all thirteen baselines, all forty ablation runs,
+and the constant-zero martingale. Not until the level is relaxed to 25%, where
+the set would exclude the true best model three times in four, does a genuine
+baseline (TFT) drop out.
+
+This is the cleanest statement of the study's central negative result: **on
+point accuracy the data cannot separate a multimodal transformer from
+predicting nothing at all.** It is a property of daily equity returns at these
+horizons, not a defect of the implementation, and it is consistent with the
+linear-model findings of Zeng et al. (2023) on general time-series
+benchmarks.
+
 ---
 
 ## RQ1 — does fusing macro + sentiment improve point accuracy?

@@ -153,6 +153,99 @@ def benjamini_hochberg(pvals: list[float]) -> list[float]:
     return out.tolist()
 
 
+def _block_bootstrap_indices(n: int, n_boot: int, block: int, seed: int) -> np.ndarray:
+    """(n_boot, n) circular block-bootstrap index matrix.
+
+    Blocks, not i.i.d. resampling: the loss series of overlapping h-day
+    forecasts is strongly autocorrelated, and an i.i.d. bootstrap would
+    destroy that dependence and understate the variance of the mean loss -
+    exactly the error the Diebold-Mariano HAC variance exists to avoid.
+    """
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    starts = rng.integers(0, n, size=(n_boot, n_blocks))
+    offsets = np.arange(block)
+    idx = (starts[:, :, None] + offsets[None, None, :]) % n   # circular
+    return idx.reshape(n_boot, -1)[:, :n]
+
+
+def model_confidence_set(losses: dict[str, np.ndarray], alpha: float = 0.10,
+                         n_boot: int = 1000, block: int = 10,
+                         seed: int = 0) -> dict:
+    """Hansen-Lunde-Nason (2011) Model Confidence Set, T_max variant.
+
+    Answers the question the pairwise tests cannot: *which* models are, as a
+    group, statistically indistinguishable from the best? A table of
+    "nothing is significant" says only that no single comparison survives
+    correction; the MCS turns that into a positive statement - a set that
+    contains the best model with probability 1-alpha.
+
+    Procedure: with M the surviving set, let d_i be model i's mean loss minus
+    the average mean loss over M, and t_i = d_i / se*(d_i) with se* from a
+    block bootstrap. The equal-predictive-ability null is tested with
+    T_max = max_i t_i against its bootstrap distribution; if rejected, the
+    single worst model (argmax t_i) is eliminated and the test repeats. The
+    procedure stops at the first non-rejection, and everything still standing
+    is the MCS.
+
+    Returns the surviving set, the elimination order, and each model's MCS
+    p-value (the level at which it would drop out).
+    """
+    names = list(losses)
+    L = np.stack([np.asarray(losses[k], dtype=float).ravel() for k in names])  # (m, n)
+    m, n = L.shape
+    if m < 2:
+        return {"mcs": names, "eliminated": [], "pvalues": {names[0]: 1.0} if names else {}}
+
+    idx = _block_bootstrap_indices(n, n_boot, block, seed)
+    # bootstrap mean loss per (replicate, model); computed once and reused
+    boot_means = np.empty((n_boot, m))
+    for b in range(n_boot):
+        boot_means[b] = L[:, idx[b]].mean(axis=1)
+    mean_loss = L.mean(axis=1)
+
+    alive = list(range(m))
+    eliminated: list[tuple[str, float]] = []
+    pvals: dict[str, float] = {}
+    running_p = 0.0
+
+    while len(alive) > 1:
+        ml = mean_loss[alive]
+        bm = boot_means[:, alive]
+        d = ml - ml.mean()                              # (k,)
+        d_boot = bm - bm.mean(axis=1, keepdims=True)    # (n_boot, k)
+        var = ((d_boot - d) ** 2).mean(axis=0)
+        se = np.sqrt(np.clip(var, 1e-30, None))
+        t = d / se
+        t_boot = (d_boot - d) / se
+
+        T_obs = float(t.max())
+        T_boot = t_boot.max(axis=1)
+        p = float((T_boot > T_obs).mean())
+        # MCS p-values are monotone by construction: a model cannot be
+        # eliminated at a level below one at which an earlier model went
+        running_p = max(running_p, p)
+
+        if p >= alpha:
+            break
+        worst_local = int(np.argmax(t))
+        worst = alive[worst_local]
+        pvals[names[worst]] = running_p
+        eliminated.append((names[worst], running_p))
+        alive.pop(worst_local)
+
+    for i in alive:
+        pvals[names[i]] = max(running_p, alpha) if eliminated else 1.0
+    return {
+        "mcs": [names[i] for i in alive],
+        "eliminated": eliminated,
+        "pvalues": pvals,
+        "alpha": alpha,
+        "n_boot": n_boot,
+        "block": block,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # module entry point: significance tables over saved runs
 # --------------------------------------------------------------------------- #
@@ -185,6 +278,9 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--reference", default="dramt_full")
+    parser.add_argument("--mcs-alpha", type=float, default=0.10,
+                        help="Model Confidence Set confidence level (1-alpha)")
+    parser.add_argument("--mcs-boot", type=int, default=1000)
     args = parser.parse_args()
 
     base = load_config("config.yaml")
@@ -199,6 +295,7 @@ def main() -> None:
     assert ref is not None, f"reference run {args.reference} not found"
     ref_err, ref_anchor = ref
 
+    all_losses: dict[str, np.ndarray] = {}
     wilcoxon_rows, boot_rows = [], []
     for d in sorted(runs_dir.iterdir()):
         if not d.is_dir() or not list(d.glob("fold*/test_predictions.npz")):
@@ -215,6 +312,7 @@ def main() -> None:
         if len(err) != len(ref_err) or not np.array_equal(anchor, ref_anchor):
             logger.warning("skip %s: anchor set differs from reference", d.name)
             continue
+        all_losses[d.name] = err
         w = wilcoxon_paired(ref_err, err)
         dm = diebold_mariano(ref_err, err, horizon=h_max)
         wilcoxon_rows.append({
@@ -226,6 +324,29 @@ def main() -> None:
             "dm_p": dm["pvalue"],
             "A_better": bool(w["median_diff"] < 0),
         })
+
+    # the reference is `continue`d out of the pairwise loop before the losses
+    # are collected, but it must be a candidate in its own confidence set
+    all_losses[args.reference] = ref_err
+
+    # ---- Model Confidence Set ------------------------------------------
+    mcs = model_confidence_set(all_losses, alpha=args.mcs_alpha,
+                               n_boot=args.mcs_boot, block=h_max,
+                               seed=base["seed"])
+    mcs_rows = [{"run": r,
+                 "in_mcs": r in set(mcs["mcs"]),
+                 "mcs_pvalue": mcs["pvalues"].get(r, np.nan),
+                 "mean_abs_err": float(np.mean(all_losses[r]))}
+                for r in sorted(all_losses)]
+    pd.DataFrame(mcs_rows).sort_values("mean_abs_err").to_csv(
+        results_dir / "stats_mcs.csv", index=False)
+    logger.info("Model Confidence Set (alpha=%.2f, block bootstrap len=%d): "
+                "%d of %d models survive; reference %s in MCS: %s",
+                args.mcs_alpha, h_max, len(mcs["mcs"]), len(all_losses),
+                args.reference, args.reference in set(mcs["mcs"]))
+    if mcs["eliminated"]:
+        logger.info("  eliminated (worst first): %s",
+                    [n for n, _ in mcs["eliminated"]][:12])
 
     dfw = pd.DataFrame(wilcoxon_rows)
     if len(dfw):
