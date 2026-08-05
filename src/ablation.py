@@ -82,7 +82,12 @@ def main() -> None:
     for cfg_name in args.configs:
         flags = ABLATIONS[cfg_name]
         for seed in seeds:
-            name = (f"ablation_{cfg_name}_s{seed}" if len(seeds) > 1
+            # Suffix whenever seeds were requested explicitly, including a
+            # single one: the chain dispatches ablations as one job per
+            # (config, seed) so they can run in parallel, and each of those
+            # jobs must still produce the ablation_<cfg>_s<seed> name that
+            # src/tables.py groups on.
+            name = (f"ablation_{cfg_name}_s{seed}" if args.seeds
                     else f"ablation_{cfg_name}")
             exp = {**best, **flags, "name": name,
                    "dataset_suffix": args.suffix, "seed": seed}

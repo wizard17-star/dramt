@@ -15,7 +15,8 @@ Steps (note: 9 runs between 3 and 4)
                          run in step 6 rather than needing its own training)
   3  RQ3 variants        extended gate signals, per-timestep gating, and both
   9  objective variants  lambda1 rebalancing, risk-only, ranking loss
-  4  ablations           the 6 existing ablation configs
+  4  ablations           8 configs (incl. permutation) x 5 seeds, dispatched
+                         as individual jobs so they parallelise
   5  seed ensemble       N seeds of the best config + the combined ensemble
   6  evaluate            every run under both global and rolling calibration
   7  stats/tables/plots
@@ -314,19 +315,26 @@ def main() -> None:
             p = write_exp(name, best, seed=seed)
             jobs.append((["src.train", "--config", str(p)], f"seed {seed}"))
 
+    # ---- 4. ablations, one job per (config, seed) ------------------------
+    # 8 configs x 5 seeds = 40 runs. Looping them inside a single src.ablation
+    # process measured 3.8h of serial work while everything else parallelised
+    # to 0.5h, making ablations the whole chain's bottleneck. Dispatching them
+    # as individual jobs folds them into the same parallel batch.
+    if want(4):
+        from src.ablation import ABLATIONS
+        for cfg_name in ABLATIONS:
+            for seed in ABLATION_SEEDS:
+                if skip(f"ablation_{cfg_name}_s{seed}"):
+                    continue
+                jobs.append((["src.ablation", "--suffix", "",
+                              "--configs", cfg_name, "--seeds", str(seed)],
+                             f"ablation {cfg_name} seed {seed}"))
+
     # All of the above are independent runs writing to distinct directories,
     # so they can be dispatched together.
     if jobs:
         run_many(jobs, args.parallel)
 
-    # ---- 4. ablations, multiple seeds each --------------------------------
-    # Single-seed ablation deltas were smaller than the seed noise floor, so
-    # each configuration is run over several seeds and the table reports
-    # mean +/- seed std. Kept serial: src.ablation loops internally.
-    if want(4):
-        run(["src.ablation", "--suffix", "",
-             "--seeds", *[str(s) for s in ABLATION_SEEDS]],
-            f"ablations x {len(ABLATION_SEEDS)} seeds")
 
     # ---- 5b. build the ensemble (needs every member finished) -------------
     if want(5):
