@@ -399,9 +399,10 @@ def main() -> None:
 
     # ---- 7. stats, tables, figures ---------------------------------------
     if want(7):
-        run(["src.stats_tests", "--reference", "dramt_ensemble"], "significance tests")
+        run(["src.stats_tests", "--reference", "dramt_tg_ensemble"],
+            "significance tests + Model Confidence Set")
         run(["src.tables"], "LaTeX/CSV tables")
-        run(["src.utils.plotting", "--run", "dramt_ensemble"], "figures")
+        run(["src.utils.plotting", "--run", "dramt_tg_ensemble"], "figures")
         # news-stratified accuracy + volatility-targeting economic evaluation
         run(["src.analysis"], "news strata + economic value")
 
