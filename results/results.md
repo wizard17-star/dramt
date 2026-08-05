@@ -279,11 +279,25 @@ than one. The result the CPU-era draft asserted qualitatively for the
 risk-aware head now has significance behind it — on correlation, not on the
 mean.
 
-This is the second output that demonstrably works. Against the martingale
-result for the mean, the picture across the three heads is: the **mean** is
-not forecastable, the **volatility** is (and is now as well calibrated as
-GARCH), and the **correlation** is, beating its own naive baseline and
-matching a dedicated multivariate GARCH.
+This is the second output that demonstrably works. Across the three heads:
+the **mean** is not forecastable; the **volatility** is well *calibrated* but
+not as *accurate* as GARCH; the **correlation** beats its own naive baseline
+and matches a dedicated multivariate GARCH.
+
+**Calibration and accuracy are different claims, and the distinction matters
+here:**
+
+| Model | Vol RMSE (accuracy) | VaR breach (calibration) |
+|---|---|---|
+| GARCH(1,1) | **0.01186** | 4.35% |
+| HAR-RV | 0.01272 | 3.70% |
+| DRAM-T ensemble, Student-t + GARCH | 0.01753 | 4.57% |
+
+GARCH predicts the *level* of volatility roughly 48% more accurately than
+DRAM-T. What the RQ2 work achieved is that DRAM-T's predictive distribution is
+now correctly *shaped* — its 95% VaR is breached at close to the nominal rate
+and its Expected Shortfall test passes — not that its volatility forecasts are
+competitive in RMSE. The thesis should claim the former and not the latter.
 
 ### Epistemic vs aleatoric uncertainty (MC-dropout)
 
@@ -341,6 +355,56 @@ standard deviation (0.00095), and the static-fusion ablation remains
 nominally *better* than the full dynamic model (−0.00025). Enriching the gate
 with VIX level and slope, trailing average correlation and drawdown did not
 change this. Gating remains interpretable but not demonstrably useful.
+
+---
+
+## A caveat on model selection
+
+The sweep ranked 480 configurations by
+
+    score = l_point + 0.1·l_vol + 0.1·l_corr
+
+averaged as a raw mean over the four folds. Two properties of that criterion
+are worth stating, because they bear on how much weight the "selected
+configuration" can carry.
+
+**The criterion is driven almost entirely by the component with no signal.**
+Decomposing the variance of the score across the 1,920 trials:
+
+| Component | share of score | share of score *variance* |
+|---|---|---|
+| `l_point` | 88.3% | **101.6%** |
+| `0.1·l_vol` | 6.3% | 0.3% |
+| `0.1·l_corr` | 5.4% | 1.1% |
+
+Configurations were therefore ranked almost entirely on point-forecast
+validation loss — the one objective this study shows to be unlearnable. The
+two heads that demonstrably work contributed under 2% of the ranking signal.
+Consistently, the sweep selected λ2 = 0.1, the *lowest* correlation weight in
+the grid, for the head that turns out to be the model's best output.
+
+**Raw cross-fold averaging lets one fold dominate.** Fold 0's scores are on a
+scale roughly twice the others (mean 4.61 versus 2.60–2.92) with the largest
+spread, so it contributes **46% of the between-configuration variance** in the
+ranking — and fold 0 is the anomalous low-volatility block.
+
+**Does fixing it change anything? Measurably, no.** Re-scoring the recorded
+1,920 trials with fold-standardised components and a risk-weighted criterion
+selects a different configuration (T=20, d=256, L=4, λ1=0.5, **λ2=0.5**,
+lr=5e-5). Trained with the same Student-t + GARCH-hybrid head, it lands
+*inside the 10-seed range of the existing configuration on every metric*:
+
+| Metric | 10-seed range of selected config | risk-selected config |
+|---|---|---|
+| MAE | 0.03276 – 0.03571 | 0.03372 |
+| Vol RMSE | 0.01753 – 0.01951 | 0.01918 |
+| Corr RMSE | 0.33706 – 0.36872 | 0.35483 |
+| VaR breach | 2.17% – 5.00% | 4.53% |
+
+This is coherent rather than disappointing: if configurations are selected on
+noise, then different selection criteria will pick different configurations
+that all perform the same — which is exactly what happens. The flaw is real
+and worth documenting, but it did not cost the study a better model.
 
 ---
 

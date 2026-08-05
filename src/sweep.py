@@ -19,7 +19,16 @@ different lambdas (a bigger lambda mechanically inflates the total), every
 config is scored with the SAME fixed reference weights applied to its
 per-component validation losses at its best epoch:
 
-    score = l_point + 0.1 * l_vol + 0.1 * l_corr
+    score = l_point + 0.1 * l_vol + 0.1 * l_corr        (--select-by composite)
+
+Measured caveat on that default: across this project's 1,920 trials, 101.6% of
+the score variance comes from l_point, the objective the study finds to be
+unlearnable (l_vol 0.3%, l_corr 1.1%), and fold 0 supplies 46% of the
+between-config variance because its loss scale is twice the others. --select-by
+risk|balanced standardise each component within fold and reweight toward the
+learnable objectives. Empirically the resulting config performs inside the seed
+range of the composite choice, which is consistent with selection being
+noise-driven either way.
 
 Cost control
 ------------
@@ -48,6 +57,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from src.data.splits import walk_forward_folds
@@ -156,6 +166,9 @@ def main() -> None:
     parser.add_argument("--nshards", type=int, default=1)
     parser.add_argument("--no-aggregate", action="store_true",
                         help="skip writing results.csv/best.yaml (for shard workers)")
+    parser.add_argument("--select-by", default="composite",
+                        choices=["composite", "risk", "balanced"],
+                        help="which validation criterion ranks configurations")
     args = parser.parse_args()
 
     base = load_config("config.yaml")
@@ -254,10 +267,52 @@ def main() -> None:
             "seconds_total": round(sum(float(r["seconds"]) for r in rs), 1),
         })
 
-    # Prefer configs scored on more folds; among those, lowest mean val score.
+    # ---- selection criterion -------------------------------------------
+    # Measured on this project's own 1,920 trials, the default "composite"
+    # criterion (l_point + 0.1*l_vol + 0.1*l_corr, averaged raw over folds)
+    # has two properties worth knowing:
+    #   * 101.6% of its variance across configurations comes from l_point,
+    #     the objective this study finds to be unlearnable; l_vol contributes
+    #     0.3% and l_corr 1.1%. Configurations are ranked almost entirely on
+    #     noise, and the sweep duly selected the LOWEST correlation weight for
+    #     the head that turns out to work best.
+    #   * fold 0's loss scale is roughly twice the others', so a raw mean
+    #     lets that single (anomalous, low-volatility) fold supply 46% of the
+    #     between-configuration variance.
+    # "risk" and "balanced" standardise each component within fold before
+    # averaging, which removes the scale imbalance, and reweight toward the
+    # learnable objectives. Empirically the resulting configuration performs
+    # inside the seed range of the composite choice - consistent with
+    # selection being noise-driven either way - but the criterion is exposed
+    # so the choice is explicit rather than accidental.
     max_folds = max(a["n_folds_scored"] for a in agg)
-    ranked = sorted([a for a in agg if a["n_folds_scored"] == max_folds],
-                    key=lambda a: a["score_mean"])
+    pool = [a for a in agg if a["n_folds_scored"] == max_folds]
+
+    if args.select_by == "composite":
+        ranked = sorted(pool, key=lambda a: a["score_mean"])
+    else:
+        by_fold: dict[int, list[dict]] = defaultdict(list)
+        for r in rows:
+            by_fold[int(r["fold"])].append(r)
+        stats: dict[int, dict[str, tuple[float, float]]] = {}
+        for k, rs in by_fold.items():
+            stats[k] = {}
+            for comp in ("val_point", "val_vol", "val_corr"):
+                v = np.array([float(r[comp]) for r in rs])
+                stats[k][comp] = (float(v.mean()), float(v.std()) or 1.0)
+
+        weights = ({"val_vol": 1.0, "val_corr": 1.0} if args.select_by == "risk"
+                   else {"val_point": 1.0, "val_vol": 1.0, "val_corr": 1.0})
+        for a in pool:
+            zs = []
+            for r in by_cfg[a["cfg"]]:
+                k = int(r["fold"])
+                zs.append(sum(
+                    w * (float(r[c]) - stats[k][c][0]) / stats[k][c][1]
+                    for c, w in weights.items()))
+            a["score_selected"] = float(np.mean(zs))
+        ranked = sorted(pool, key=lambda a: a["score_selected"])
+    logger.info("selection criterion: %s", args.select_by)
     with open(sweep_dir / "results.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(agg[0].keys()))
         w.writeheader()
