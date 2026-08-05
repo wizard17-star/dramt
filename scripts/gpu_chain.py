@@ -17,7 +17,8 @@ Steps (note: 9 runs between 3 and 4)
   9  objective variants  lambda1 rebalancing, risk-only, ranking loss
   4  ablations           8 configs (incl. permutation) x 5 seeds, dispatched
                          as individual jobs so they parallelise
-  5  seed ensemble       N seeds of the best config + the combined ensemble
+  5  seed ensembles      two 10-seed families (Gaussian, and Student-t +
+                         GARCH-hybrid) plus their combined ensembles
   6  evaluate            every run under both global and rolling calibration
   7  stats/tables/plots
   8  verify              anchor comparability + Wilcoxon coverage check
@@ -72,7 +73,21 @@ RQ3_VARIANTS = [
     ("dramt_gate_ext_time",  "extended", True),
 ]
 
+# Two ensemble families, each 10 seeds of the swept configuration.
+#   dramt_seed*    : the swept config as-is (Gaussian likelihood)
+#   dramt_tg_seed* : the same config plus the RQ2 changes
+# Both are built because the comparison between them is the RQ2 evidence: the
+# Gaussian ensemble has the better headline accuracy but breaches 10-day VaR
+# at 10.0% with the ES test rejected, while the Student-t + GARCH-hybrid
+# ensemble matches its accuracy to within 1/50th of a seed standard deviation
+# and breaches at 4.6% with ES accepted. The latter is the flagship: it is the
+# only run that carries every contribution at once.
 ENSEMBLE_SEEDS = list(range(42, 52))   # 10 seeds
+ENSEMBLE_FAMILIES = [
+    ("dramt_seed", "dramt_ensemble", {}),
+    ("dramt_tg_seed", "dramt_tg_ensemble",
+     {"dist": "student_t", "vol_mode": "garch_hybrid"}),
+]
 # Ablations get several seeds because the measured single-seed effects
 # (+0.00076 .. -0.00040 MAE) were smaller than the seed spread (0.00053).
 ABLATION_SEEDS = [42, 43, 44, 45, 46]
@@ -191,8 +206,9 @@ def expected_run_names() -> list[str]:
     names += [n for n, _, _ in RISK_VARIANTS]
     names += [n for n, _, _ in RQ3_VARIANTS]
     names += [n for n, _, _, _ in OBJECTIVE_VARIANTS]
-    names += [f"dramt_seed{s}" for s in ENSEMBLE_SEEDS]
-    names += ["dramt_ensemble"]
+    for prefix, ens_name, _ in ENSEMBLE_FAMILIES:
+        names += [f"{prefix}{s}" for s in ENSEMBLE_SEEDS]
+        names.append(ens_name)
     names += [f"ablation_{c}_s{s}" for c in ABLATIONS for s in ABLATION_SEEDS]
     return names
 
@@ -339,15 +355,16 @@ def main() -> None:
             jobs.append((["src.train", "--config", str(p)],
                          f"objective variant {name}", name))
 
-    # ---- 5a. seed runs (ensemble members) --------------------------------
-    members = [f"dramt_seed{s}" for s in ENSEMBLE_SEEDS]
+    # ---- 5a. seed runs (both ensemble families) --------------------------
     if want(5):
-        for seed in ENSEMBLE_SEEDS:
-            name = f"dramt_seed{seed}"
-            if skip(name):
-                continue
-            p = write_exp(name, best, args.dry_run, seed=seed)
-            jobs.append((["src.train", "--config", str(p)], f"seed {seed}", name))
+        for prefix, _ens, overrides in ENSEMBLE_FAMILIES:
+            for seed in ENSEMBLE_SEEDS:
+                name = f"{prefix}{seed}"
+                if skip(name):
+                    continue
+                p = write_exp(name, best, args.dry_run, seed=seed, **overrides)
+                jobs.append((["src.train", "--config", str(p)],
+                             f"{prefix}{seed}", name))
 
     # ---- 4. ablations, one job per (config, seed) ------------------------
     # 8 configs x 5 seeds = 40 runs. Looping them inside a single src.ablation
@@ -383,10 +400,12 @@ def main() -> None:
         run_many(jobs, args.parallel, args.n_folds)
 
 
-    # ---- 5b. build the ensemble (needs every member finished) -------------
+    # ---- 5b. build the ensembles (need every member finished) ------------
     if want(5):
-        run(["src.ensemble", "--runs", *members, "--out", "dramt_ensemble"],
-            "seed ensemble")
+        for prefix, ens_name, _ in ENSEMBLE_FAMILIES:
+            members = [f"{prefix}{s}" for s in ENSEMBLE_SEEDS]
+            run(["src.ensemble", "--runs", *members, "--out", ens_name],
+                f"ensemble {ens_name}")
 
     # ---- 6. evaluate under both calibrations ------------------------------
     if want(6):
