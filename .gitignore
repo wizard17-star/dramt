@@ -10,3 +10,4 @@ results/figures/*.pdf
 *.egg-info/
 .ipynb_checkpoints/
 runs_cpu_era/
+runs_exploratory/
