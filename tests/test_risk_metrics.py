@@ -370,3 +370,32 @@ def test_mcs_single_model():
 
     res = model_confidence_set({"only": np.abs(RNG.normal(0, 1, 100))})
     assert res["mcs"] == ["only"]
+
+
+def test_block_bootstrap_ci_is_wider_under_autocorrelation():
+    """The reason bootstrap_ci gained a block option: with autocorrelated
+    per-anchor errors an i.i.d. bootstrap treats every anchor as independent
+    evidence and returns an interval that is too narrow."""
+    rng = np.random.default_rng(11)
+    n = 1500
+    x = np.zeros(n)
+    for t in range(1, n):
+        x[t] = 0.9 * x[t - 1] + rng.normal(0, 0.1)
+    x = np.abs(x) + 0.03
+
+    iid = bootstrap_ci(x, np.mean, n_resamples=600, block=1)
+    blocked = bootstrap_ci(x, np.mean, n_resamples=600, block=20)
+    assert (blocked["hi"] - blocked["lo"]) > (iid["hi"] - iid["lo"])
+    # the point estimate is unchanged; only the uncertainty around it grows
+    assert np.isclose(iid["stat"], blocked["stat"])
+
+
+def test_block_bootstrap_matches_iid_on_independent_data():
+    """With no autocorrelation the two should agree closely, so the block
+    option cannot be inflating intervals indiscriminately."""
+    x = np.abs(RNG.normal(0, 1, 3000))
+    iid = bootstrap_ci(x, np.mean, n_resamples=800, block=1)
+    blocked = bootstrap_ci(x, np.mean, n_resamples=800, block=10)
+    w_iid = iid["hi"] - iid["lo"]
+    w_blk = blocked["hi"] - blocked["lo"]
+    assert abs(w_blk - w_iid) / w_iid < 0.25

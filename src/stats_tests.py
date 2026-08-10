@@ -34,14 +34,35 @@ def bootstrap_ci(
     n_resamples: int = 1000,
     conf: float = 0.95,
     seed: int = 42,
+    block: int = 1,
 ) -> dict[str, float]:
-    """Percentile bootstrap CI for a statistic of per-sample values."""
+    """Percentile bootstrap CI for a statistic of per-sample values.
+
+    `block` > 1 selects a circular BLOCK bootstrap. That is the correct choice
+    for the per-anchor forecast errors used here: overlapping h-day forecasts
+    make consecutive errors strongly autocorrelated, and i.i.d. resampling
+    treats each anchor as independent evidence, producing intervals that are
+    too narrow. The Diebold-Mariano HAC variance and the Model Confidence Set
+    already account for this dependence; leaving the CIs on an i.i.d.
+    bootstrap would make them inconsistent with the tests beside them.
+
+    block=1 reproduces the original i.i.d. behaviour.
+    """
     rng = np.random.default_rng(seed)
     values = np.asarray(values).ravel()
     n = len(values)
-    boot = np.array([stat_fn(values[rng.integers(0, n, n)]) for _ in range(n_resamples)])
+    if block <= 1:
+        idx = rng.integers(0, n, size=(n_resamples, n))
+    else:
+        n_blocks = int(np.ceil(n / block))
+        starts = rng.integers(0, n, size=(n_resamples, n_blocks))
+        offsets = np.arange(block)
+        idx = (starts[:, :, None] + offsets[None, None, :]) % n
+        idx = idx.reshape(n_resamples, -1)[:, :n]
+    boot = np.array([stat_fn(values[i]) for i in idx])
     lo, hi = np.percentile(boot, [(1 - conf) / 2 * 100, (1 + conf) / 2 * 100])
-    return {"stat": float(stat_fn(values)), "lo": float(lo), "hi": float(hi)}
+    return {"stat": float(stat_fn(values)), "lo": float(lo), "hi": float(hi),
+            "block": block}
 
 
 def wilcoxon_paired(err_a: np.ndarray, err_b: np.ndarray) -> dict[str, float]:
@@ -330,7 +351,8 @@ def main() -> None:
         if loaded is None:
             continue
         err, anchor = loaded
-        ci = bootstrap_ci(err, np.mean, n_resamples=1000)
+        # block bootstrap: same dependence handling as the DM/MCS tests beside it
+        ci = bootstrap_ci(err, np.mean, n_resamples=1000, block=h_max)
         boot_rows.append({"run": d.name, "mean_abs_err": ci["stat"],
                           "ci_lo": ci["lo"], "ci_hi": ci["hi"], "n": len(err)})
         if d.name == args.reference:
