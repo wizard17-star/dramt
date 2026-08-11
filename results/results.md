@@ -24,12 +24,12 @@ significance: `stats_wilcoxon.csv`, `stats_mcs.csv`; analyses: `analysis_*.csv`.
 
 | Model | MAE | RMSE | DirAcc | 10-day VaR breach |
 |---|---|---|---|---|
-| ARIMA | **0.03280** | **0.04487** | 0.551 | – |
-| GARCH(1,1) | 0.03287 | 0.04502 | 0.536 | 4.3% |
+| ARIMA | **0.03280** | **0.04486** | 0.551 | – |
+| GARCH(1,1) | 0.03287 | 0.04519 | 0.536 | 4.3% |
 | DRAM-T (10-seed ensemble, Gaussian) | 0.03299 | 0.04521 | 0.549 | 10.0% |
-| **DRAM-T (10-seed ensemble, Student-t + GARCH-hybrid)** | 0.03301 | 0.04524 | **0.552** | **4.6%** |
-| **Martingale (zero forecast)** | **0.03308** | 0.04502 | – | 5.0% |
-| DRAM-T (Gaussian, single seed) | 0.03353 | 0.04585 | 0.543 | 9.6% |
+| **DRAM-T (10-seed ensemble, Student-t + GARCH-hybrid)** | 0.03301 | 0.04518 | **0.552** | **4.6%** |
+| **Martingale (zero forecast)** | **0.03308** | 0.04501 | – | 5.0% |
+| DRAM-T (Gaussian, single seed) | 0.03352 | 0.04585 | 0.543 | 9.6% |
 | Temporal Fusion Transformer | 0.03576 | 0.04848 | 0.513 | – |
 
 The last two rows of the DRAM-T family are the study's proposed model. The
