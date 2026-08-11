@@ -442,7 +442,7 @@ the pipeline is doing what it claims.)
 |---|---|---|---|---|---|
 | DRAM-T ensemble, Gaussian | 13.0% | 9.0% | 7.8% | 10.1% | 10.0% |
 | **DRAM-T ensemble, Student-t + GARCH** | 6.1% | 3.8% | 3.2% | 5.2% | **4.6%** |
-| GARCH(1,1) | 5.8% | 4.4% | 3.2% | 4.1% | 4.3% |
+| GARCH(1,1) | 5.8% | 4.3% | 3.2% | 4.1% | 4.3% |
 
 The Student-t + GARCH ensemble sits near the nominal 5% in every variant and
 the Gaussian one fails in every variant. Neither conclusion depends on which
