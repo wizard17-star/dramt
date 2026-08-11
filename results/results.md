@@ -87,7 +87,7 @@ overlapping forecasts make an i.i.d. bootstrap overstate precision):
 | 90% (α = 0.10) | **88 / 88** | — |
 | 75% (α = 0.25) | 87 / 88 | one individual seed |
 | 50% (α = 0.50) | 86 / 88 | + one ablation seed |
-| 25% (α = 0.75) | 80 / 88 | + TFT, more seeds |
+| 25% (α = 0.75) | 81 / 88 | + TFT, more seeds |
 
 **At the 90% level the confidence set contains every model in the study** —
 the proposed architecture, all thirteen baselines, all forty ablation runs,
