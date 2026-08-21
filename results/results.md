@@ -212,7 +212,7 @@ Expected Shortfall (Acerbi–Székely Test 2, simulated null):
 | GARCH(1,1) | +0.14 | 0.06 | not rejected |
 
 **Which of the three changes did the work.** Rolling calibration alone moved
-the Gaussian model from 11.3% to 10.0% — real but small. The Student-t
+the Gaussian model from 10.4% to 10.0% — real but small. The Student-t
 likelihood is what closed the gap. The heavy tail is doing the work, not the
 recalibration.
 
@@ -373,9 +373,9 @@ Decomposing the variance of the score across the 1,920 trials:
 
 | Component | share of score | share of score *variance* |
 |---|---|---|
-| `l_point` | 88.3% | **101.6%** |
-| `0.1·l_vol` | 6.3% | 0.3% |
-| `0.1·l_corr` | 5.4% | 1.1% |
+| `l_point` | 88.3% | **100.3%** |
+| `0.1·l_vol` | 6.3% | 4.2% |
+| `0.1·l_corr` | 5.4% | −4.4% |
 
 Configurations were therefore ranked almost entirely on point-forecast
 validation loss — the one objective this study shows to be unlearnable. The
