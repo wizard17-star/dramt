@@ -15,8 +15,9 @@ significance: `stats_wilcoxon.csv`, `stats_mcs.csv`; analyses: `analysis_*.csv`.
 > cache grew from 54,236 to 168,411 scored headlines — the earlier machine had
 > never finished scoring the retrieved corpus (no GDELT was re-fetched). The
 > horizon set also went from 6 to 10. Every model here was re-run on the new
-> dataset; the CPU-era artifacts are preserved under `runs_cpu_era/` and
-> `results_cpu_era/`.
+> dataset; the CPU-era metrics are preserved under `results_cpu_era/`. The
+> matching checkpoints are kept locally under `runs_cpu_era/`, which is not
+> tracked in the repository.
 
 ---
 
